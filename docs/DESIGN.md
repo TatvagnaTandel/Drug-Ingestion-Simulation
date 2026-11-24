@@ -242,4 +242,3 @@ reading. Neither one is a way to change the dose.
   and says what it is: *context, not the model's output and not advice*.
   The engine never reads it. If PubMed is unreachable the step reads
   fine without it.
-

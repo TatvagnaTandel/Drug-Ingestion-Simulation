@@ -15,19 +15,25 @@ npm ci
 npm run dev:web
 ```
 
-Open [localhost:3000](http://localhost:3000) and choose **Open the simulator**. Select **Levetiracetam** or **Linezolid** and click **Start journey**. Both studies work without an account or API keys. To try a custom schedule without Supabase, choose **Custom setup → Load synthetic example → Run and play**.
+Open [localhost:3000](http://localhost:3000) and choose **Open the simulator**. Select **Levetiracetam** or **Linezolid** and click **Start journey**. Both studies work without an account or API keys. For a custom schedule, open **Custom setup** and add a medicine from the bundled catalogue, or choose **Load synthetic example**. Then select **Run and play**.
 
 ## Follow a dose
 
-The camera follows the first scheduled oral dose from swallowing and absorption through circulation, distribution and clearance. It pauses at organ stops while the explanation and model values update. Use the journey rail to jump to a stage, scrub the timeline, or press **Space** to pause or resume when focus is outside a form control. The organ monitor lets you inspect individual organs.
+The camera follows the first scheduled oral dose from swallowing and absorption through circulation, distribution and clearance. It holds its view at each organ stop while the clock and model values update. Use the journey rail to jump to a stage, scrub the timeline, or press **Space** to pause or resume when focus is outside a form control. Use **Inspect an organ** beside the live model outputs to isolate an organ.
 
 ![Guided playback paused at the lungs, with the 3D model, journey rail, model readouts, and timeline visible](docs/screenshots/journey.webp)
 
 ## Read and export results
 
-Open **Results** to see the concentration curve, peak concentration, time to peak and when the curve stays below 5% of its peak after the last dose. With multiple medicines, each medicine has its own curve. **Download PDF** exports the dose schedule, model inputs, figures, journey checkpoints and source references. The built-in studies cite published adult research and prescribing information.
+Open **Results** for peak concentration, time to peak, area under the curve and elimination half-life. Each medicine has its own series for central concentration, gut amount and total elimination. **Download CSV** exports the time series. **Download PDF** exports the dose schedule, model inputs, figures, journey checkpoints and source references. The built-in studies cite published adult research and prescribing information.
 
 ![Levetiracetam results with a concentration curve, peak metrics, source inputs, and a Download PDF button](docs/screenshots/results.webp)
+
+## Explore organ profiles
+
+Open **Organ Lab** from the navigation to compare reference and adjusted simulations. Explore profiles for the heart, lungs, liver and kidneys, and see how an illustrative change to clearance affects the concentration curve. The lab has a synthetic example that runs without Supabase.
+
+The lab can extract candidate values from a text-based sample PDF. The file and imported values stay in your browser. Review the extracted values before applying them to a draft. The organ profiles and clearance comparisons are teaching scenarios. See the [organ profile data and sources](data/organ-profiles).
 
 ## Optional Supabase setup
 
@@ -42,7 +48,7 @@ Enable email authentication and allowlist `http://localhost:3000/signin` in Supa
 
 ## Model and limits
 
-The oral model uses one central compartment, first-order absorption and elimination, and an optional absorption lag. The walkthrough illustrates anatomy alongside model-wide estimates. Each medicine is simulated independently. Organ tissue concentrations, drug interactions and disease effects are outside the model. Use the simulator for education only.
+The oral model uses one central compartment, first-order absorption and elimination, and an optional absorption lag. The walkthrough illustrates anatomy alongside model-wide estimates. Each medicine is simulated independently. Organ tissue concentrations and drug interactions are outside the model. The Organ Lab uses fictional organ responses and illustrative changes to clearance to teach how the model behaves. Use the simulator for education only.
 
 The local PK reference check currently flags the ibuprofen example. Its simulated time to peak is 1.25 hours against a published reference of 0.79 hours, outside the check's 25% tolerance. The references used for this check are recorded in [data/validation.json](data/validation.json).
 

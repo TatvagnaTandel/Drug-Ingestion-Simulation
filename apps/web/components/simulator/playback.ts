@@ -1,5 +1,4 @@
-import type { SimResult } from "@dib/engine";
-import { momentAt, type Condition } from "./condition";
+import type { simulate, SimResult } from "@dib/engine";
 import type { FocusOrgan } from "./scene";
 
 export const ROUTE_COPY = {
@@ -16,35 +15,21 @@ export const ROUTE_COPY = {
 } as const;
 
 export type DoseRoute = keyof typeof ROUTE_COPY;
-export type PlaybackStage = { label: string; organ: FocusOrgan | null; hours: number; route?: DoseRoute };
+export type PlaybackStage = { label: string; organ: FocusOrgan | null; hours: number; startsAtH: number; route?: DoseRoute };
+export type JourneyPosition = { hours: number; swallowElapsedMs: number };
 
 export const TRAVEL_MS = 3200;
 export const HOLD_MS = 4000;
-export const STAGE_MS = TRAVEL_MS + HOLD_MS;
-export const TRAVEL_FRACTION = TRAVEL_MS / STAGE_MS;
-
-export function stageMotion(progress: number) {
-  const fraction = progress - Math.floor(progress);
-  const holding = fraction + 1e-9 >= TRAVEL_FRACTION;
-  const travel = holding ? 1 : fraction / TRAVEL_FRACTION;
-  return {
-    // Ease the marker into and out of each stop with zero endpoint velocity.
-    fraction: travel * travel * (3 - 2 * travel),
-    holding,
-  };
-}
 
 export function buildStages(
-  result: Pick<SimResult, "tH" | "concMgPerL" | "timeToClearH">,
+  result: Pick<SimResult, "tH" | "concMgPerL"> & Partial<Pick<SimResult, "timeToClearH">>,
   doseHours: number[],
-  condition: Condition,
+  lagH = 0,
 ): PlaybackStage[] {
   const end = result.tH.at(-1) ?? 0;
-  const [first = 0, ...later] = [...new Set(doseHours.filter((time) => time >= 0 && time <= end))]
+  if (end <= 0) return [];
+  const [first = 0, nextDose = Infinity] = [...new Set(doseHours.filter((time) => time >= 0 && time <= end))]
     .sort((a, b) => a - b);
-  const nextDose = later[0] ?? Infinity;
-  // Anchor the first close-ups to the first dose. A later dose can create
-  // the run's highest concentration, so the graph retains the global peak.
   let firstPeak = first;
   let peak = 0;
   for (let i = 0; i < result.tH.length; i += 1) {
@@ -55,44 +40,76 @@ export function buildStages(
       firstPeak = time;
     }
   }
-  const tail = Math.max(firstPeak, Math.min(end, result.timeToClearH ?? end));
-  const rise = firstPeak - first;
-  const brain = condition.organs.includes("brain");
-  return [
-    { label: "Overview", organ: null, hours: 0 },
-    { label: "Swallow", organ: null, route: "swallow", hours: first },
-    { label: "Absorption", organ: "gut", route: "absorption", hours: first },
-    { label: "Portal circulation", organ: "liver", route: "portal", hours: first + rise * 0.22 },
-    { label: "Right heart", organ: "heart", route: "right-heart", hours: first + rise * 0.38 },
-    { label: "Lungs", organ: "lungs", route: "lungs", hours: first + rise * 0.52 },
-    { label: "Left heart", organ: "heart", route: "left-heart", hours: first + rise * 0.68 },
-    { label: brain ? "Brain" : "Distribution", organ: brain ? "brain" : null, route: brain ? "brain" : "body", hours: firstPeak },
-    { label: "Liver clearance", organ: "liver", route: "liver", hours: firstPeak + (tail - firstPeak) * 0.16 },
-    { label: "Kidneys", organ: "kidneys", route: "kidneys", hours: end },
+
+  // Leave room for the nine illustrative stops even if the dose or peak is at the window boundary.
+  const swallow = first < end ? first : 0;
+  const brain = firstPeak > swallow && firstPeak < end ? firstPeak : swallow + (end - swallow) / 2;
+  const gutEntry = first + lagH;
+  const risingStart = gutEntry >= swallow && gutEntry < brain ? gutEntry : swallow;
+  const atRise = (fraction: number) => risingStart + (brain - risingStart) * fraction;
+  const tail = result.timeToClearH != null && result.timeToClearH > brain ? result.timeToClearH : end;
+  const stages: Omit<PlaybackStage, "startsAtH">[] = [
+    { label: "Swallow", organ: null, route: "swallow", hours: swallow },
+    { label: "Absorption", organ: "gut", route: "absorption", hours: atRise(0.10) },
+    { label: "Portal circulation", organ: "liver", route: "portal", hours: atRise(0.22) },
+    { label: "Right heart", organ: "heart", route: "right-heart", hours: atRise(0.38) },
+    { label: "Lungs", organ: "lungs", route: "lungs", hours: atRise(0.52) },
+    { label: "Left heart", organ: "heart", route: "left-heart", hours: atRise(0.68) },
+    { label: "Brain", organ: "brain", route: "brain", hours: brain },
+    { label: "Liver clearance", organ: "liver", route: "liver", hours: brain + (tail - brain) * 0.16 },
+    { label: "Kidneys", organ: "kidneys", route: "kidneys", hours: brain + (tail - brain) * 0.70 },
     { label: "Complete", organ: null, hours: end },
   ];
+  return stages.map((stage, index) => ({
+    ...stage,
+    startsAtH: index === 0 ? 0 : stage.route ? (stages[index - 1].hours + stage.hours) / 2 : stage.hours,
+  }));
 }
 
-export function playbackAt(stages: PlaybackStage[], progress: number): { index: number; hours: number } {
-  const index = Math.min(Math.max(0, Math.floor(progress)), Math.max(0, stages.length - 1));
-  // Advance to a late first dose during the overview, before the capsule appears.
-  if (index === 0) return { index, hours: (stages[1]?.hours ?? 0) * progress };
-  const end = stages[index]?.hours ?? 0;
-  const start = index === 1 ? end : stages[index - 1].hours;
-  const travel = stageMotion(progress).holding ? 1 : (progress - index) / TRAVEL_FRACTION;
-  return { index, hours: start + (end - start) * travel };
+export function playbackAt(stages: PlaybackStage[], hours: number, swallowElapsedMs = TRAVEL_MS) {
+  const index = Math.max(0, stages.findLastIndex(({ startsAtH }) => startsAtH <= hours));
+  const stage = stages[index];
+  const opening = hours === 0 && stage?.route === "swallow" && stage.hours === 0;
+  const travel = opening ? swallowElapsedMs / TRAVEL_MS :
+    stage && hours < stage.hours ? (hours - stage.startsAtH) / (stage.hours - stage.startsAtH) : 1;
+  if (travel >= 1) return { index, fraction: 1, holding: true };
+  return { index, fraction: travel * travel * (3 - 2 * travel), holding: false };
 }
 
-export function progressAt(stages: PlaybackStage[], hours: number): number {
-  if (hours <= 0) return 0;
-  const next = stages.findIndex((stage) => stage.hours >= hours);
-  if (next < 0) return stages.length - 1;
-  if (hours >= (stages.at(-1)?.hours ?? 0)) return stages.length - 1;
-  if (next === 1) return hours / stages[1].hours;
-  const start = stages[next - 1].hours;
-  return next + TRAVEL_FRACTION * (hours - start) / (stages[next].hours - start);
+export function advancePlayback(stages: PlaybackStage[], hours: number, elapsedMs: number): number {
+  const { index, holding } = playbackAt(stages, hours);
+  const stage = stages[index];
+  if (!stage) return hours;
+  const next = stages[index + 1];
+  const start = holding ? stage.hours : stage.startsAtH;
+  const end = holding ? next?.startsAtH ?? stage.hours : stage.hours;
+  const duration = holding ? HOLD_MS : TRAVEL_MS;
+  return Math.min(end, hours + (end - start) * (elapsedMs / duration));
 }
 
-export function readMoment(result: SimResult, hours: number) {
-  return momentAt(result.tH, result.gutMg, result.bodyMg, result.concMgPerL, result.eliminationMgPerH, hours);
+export function advanceJourney(stages: PlaybackStage[], position: JourneyPosition, elapsedMs: number): JourneyPosition {
+  const { hours, swallowElapsedMs } = position;
+  // A dose at hour zero has no interval on the model clock for the swallow animation.
+  if (hours === 0 && stages[0]?.route === "swallow" && stages[0].hours === 0 && swallowElapsedMs < TRAVEL_MS) {
+    const travelMs = Math.min(elapsedMs, TRAVEL_MS - swallowElapsedMs);
+    return {
+      hours: advancePlayback(stages, hours, elapsedMs - travelMs),
+      swallowElapsedMs: swallowElapsedMs + travelMs,
+    };
+  }
+  return { ...position, hours: advancePlayback(stages, hours, elapsedMs) };
+}
+
+export function readMoment(result: ReturnType<typeof simulate>, hours: number) {
+  return result.at(hours);
+}
+
+export function formatHours(hours: number) {
+  return hours.toFixed(4).replace(/(\.\d{2,}?)0+$/, "$1");
+}
+
+export function timeLabel(hours: number) {
+  const formatted = formatHours(hours);
+  const sign = Math.abs(hours - Number(formatted)) < 1e-10 ? "=" : "≈";
+  return `at t ${sign} ${formatted} h`;
 }

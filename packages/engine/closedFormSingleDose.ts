@@ -1,5 +1,6 @@
 import { SimInput, SimResult, DoseEvent } from './types';
 import { curveMetrics, sampleTimes } from './curve';
+import { computeOrganAdjustments } from './organProfiles';
 
 /**
  * Analytic (closed-form) solution of the one-compartment oral model for a
@@ -36,7 +37,8 @@ export function closedFormSingleDose(input: SimInput, dose?: DoseEvent): SimResu
   const ka = drug.ka_per_h;
   const F = drug.F ?? 1;
   const V = drug.V_L_per_kg * profile.weightKg; // L
-  const ke = (drug.CL_L_per_h_per_kg * profile.weightKg) / V; // 1/h
+  const { clearanceMultiplier } = computeOrganAdjustments(profile.organProfiles, input.clearanceMultiplier);
+  const ke = (drug.CL_L_per_h_per_kg * profile.weightKg * clearanceMultiplier) / V; // 1/h
   const tlag = drug.tlag_h ?? 0;
   if (!Number.isFinite(tlag) || tlag < 0) {
     throw new Error('closedFormSingleDose: tlag_h must be a finite number >= 0');

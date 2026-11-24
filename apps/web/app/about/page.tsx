@@ -3,9 +3,9 @@ import Link from "next/link";
 import TheatreNav from "@/components/theatre-nav";
 
 export const metadata: Metadata = {
-  title: "About — Drug-in-Body",
+  title: "About — Manava",
   description:
-    "Learn what the Drug-in-Body educational model simulates and where its parameters come from.",
+    "Learn what the Manava educational model simulates and where its parameters come from.",
 };
 
 export default function AboutPage() {
@@ -13,10 +13,22 @@ export default function AboutPage() {
     <div className="theatre">
       <TheatreNav />
       <main id="main" tabIndex={-1} className="theatre-document theatre-surface">
-        <h1 className="mt-8 text-4xl font-semibold tracking-tight">About Drug-in-Body</h1>
+        <h1 className="mt-8 text-4xl font-semibold tracking-tight">About Manava</h1>
         <p className="mt-4 leading-7 text-ink-2">
-          Drug-in-Body is an educational simulator for exploring how an oral dose changes a modeled concentration over time.
+          Manava is an educational simulator for exploring how an oral dose changes a modeled concentration over time.
         </p>
+        <div className="mt-5 flex flex-wrap items-center gap-5">
+          <Link
+            href="/simulator"
+            className="theatre-button theatre-primary"
+          >
+            Open simulator
+            <span aria-hidden="true">→</span>
+          </Link>
+          <Link href="/how-it-works" className="text-sm font-medium text-brand-text underline underline-offset-4">
+            How it works
+          </Link>
+        </div>
         <section className="mt-8 space-y-2">
           <h2 className="text-xl font-semibold">Where the parameters come from</h2>
           <p className="leading-7 text-ink-2">
@@ -43,18 +55,6 @@ export default function AboutPage() {
             For medical decisions, consult a clinician.
           </p>
         </section>
-        <div className="mt-8 flex flex-wrap items-center gap-5">
-          <Link
-            href="/simulator"
-            className="theatre-button theatre-primary"
-          >
-            Open simulator
-            <span aria-hidden="true">→</span>
-          </Link>
-          <Link href="/how-it-works" className="text-sm font-medium text-brand-text underline underline-offset-4">
-            How it works
-          </Link>
-        </div>
       </main>
     </div>
   );

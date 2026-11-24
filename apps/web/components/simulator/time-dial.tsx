@@ -1,6 +1,7 @@
 "use client";
 
 import { Pause, Play, RotateCcw } from "lucide-react";
+import { formatHours, timeLabel, type PlaybackStage } from "./playback";
 
 export type TimeDialProps = {
   maxH: number;
@@ -9,11 +10,15 @@ export type TimeDialProps = {
   onTogglePlay: () => void;
   playLabel: "Play" | "Pause" | "Resume" | "Replay";
   tmaxH?: number | null;
+  cmax?: number;
+  stages?: PlaybackStage[];
+  onScrubbing?: (scrubbing: boolean) => void;
+  showSpaceHint?: boolean;
 };
 
 const GUTTER = 14;
 
-export default function TimeDial({ maxH, hours, onHours, onTogglePlay, playLabel, tmaxH }: TimeDialProps) {
+export default function TimeDial({ maxH, hours, onHours, onTogglePlay, playLabel, tmaxH, cmax, stages = [], onScrubbing, showSpaceHint = true }: TimeDialProps) {
   const clamp = (value: number) => Math.min(maxH, Math.max(0, value));
   const current = clamp(hours);
   const fraction = maxH > 0 ? current / maxH : 0;
@@ -26,6 +31,7 @@ export default function TimeDial({ maxH, hours, onHours, onTogglePlay, playLabel
   }
 
   function endDrag(event: React.PointerEvent<HTMLDivElement>) {
+    onScrubbing?.(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -41,7 +47,15 @@ export default function TimeDial({ maxH, hours, onHours, onTogglePlay, playLabel
     };
     if (!(event.key in values)) return;
     event.preventDefault();
-    onHours(clamp(values[event.key]));
+    if (event.shiftKey && event.key.startsWith("Arrow")) {
+      const forward = event.key === "ArrowRight" || event.key === "ArrowUp";
+      const checkpoint = forward
+        ? stages.find(({ hours }) => hours > current)
+        : [...stages].reverse().find(({ hours }) => hours < current);
+      onHours(checkpoint?.hours ?? (forward ? maxH : 0));
+    } else {
+      onHours(clamp(values[event.key]));
+    }
   }
 
   return (
@@ -51,13 +65,14 @@ export default function TimeDial({ maxH, hours, onHours, onTogglePlay, playLabel
         <PlayIcon size={16} aria-hidden="true" /> {playLabel}
       </button>
       <div className="time-dial-track">
-        <div className="time-dial-labels"><span>0 h</span><output aria-live="off">Time {current.toFixed(1)} h</output><span>{maxH} h</span></div>
+        <div className="time-dial-labels"><span>0 h</span><output aria-live="off">{timeLabel(current).replace(/^at /, "")}</output><span>{maxH} h</span></div>
         <div role="slider" data-dial-strip tabIndex={0} aria-label="Simulated time, in hours"
           aria-orientation="horizontal" aria-valuemin={0} aria-valuemax={maxH}
-          aria-valuenow={Number(current.toFixed(2))} aria-valuetext={`${current.toFixed(1)} hours`}
-          data-dial-value={current.toFixed(2)} onKeyDown={onKeyDown}
+          aria-valuenow={current} aria-valuetext={timeLabel(current)}
+          data-dial-value={formatHours(current)} onKeyDown={onKeyDown}
           onPointerDown={(event) => {
             if (event.button !== 0) return;
+            onScrubbing?.(true);
             event.currentTarget.setPointerCapture(event.pointerId);
             event.currentTarget.focus();
             seekPointer(event);
@@ -66,12 +81,16 @@ export default function TimeDial({ maxH, hours, onHours, onTogglePlay, playLabel
           onPointerUp={endDrag} onPointerCancel={endDrag}>
           <div className="time-dial-rail" aria-hidden="true">
             <div className="time-dial-fill" style={{ width: `${fraction * 100}%` }} />
+            {stages.map(({ label, hours: stageHour }) => (
+              <span key={label} className="time-dial-tick" title={`${label} · ${timeLabel(stageHour)}`} style={{ left: `${stageHour / maxH * 100}%` }} />
+            ))}
+            {tmaxH != null ? <span className="time-dial-tick time-dial-peak" title={`Peak · ${cmax == null ? "" : `${cmax.toFixed(3)} mg/L `}${timeLabel(tmaxH)}`} style={{ left: `${tmaxH / maxH * 100}%` }} /> : null}
             <span className="time-dial-thumb" style={{ left: `${fraction * 100}%` }} />
           </div>
         </div>
         <div className="time-dial-caption">
-          <span>{tmaxH == null ? "Simulated time" : `Peak at ${tmaxH.toFixed(2)} h`}</span>
-          <span><kbd>Space</kbd> pause / resume</span>
+          <span>{tmaxH == null ? "Simulated time" : `Peak ${cmax == null ? "" : `${cmax.toFixed(3)} mg/L `}${timeLabel(tmaxH)}`}</span>
+          {showSpaceHint ? <span>Press <kbd>Space</kbd> to pause or resume</span> : null}
         </div>
       </div>
     </div>

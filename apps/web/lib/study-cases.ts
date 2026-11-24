@@ -59,7 +59,7 @@ export const STUDY_CASES = [
     0.616, 34.7, 3.26,
     "The one-compartment fit comes from adult outpatients with refractory epilepsy. The study reports apparent volume (V/F) and clearance (CL/F). The tablet label reports F = 1. The simulator uses these values for one illustrative oral dose.",
     [
-      { label: "Adult population PK study", url: "https://pergamos.lib.uoa.gr/uoa/dl/object/uoadl%3A3005353" },
+      { label: "Adult population PK study", url: "https://pubmed.ncbi.nlm.nih.gov/32208795/" },
       { label: "DailyMed levetiracetam label, section 12.3", url: "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=08e1bfea-7f3f-42d9-823d-f75080e664ff" },
     ],
   ),
@@ -68,7 +68,7 @@ export const STUDY_CASES = [
     1.5, 29.6, 0.25 * 29.6,
     "The model uses medians from the once-daily group in an adult pulmonary tuberculosis study. Clearance is derived as 0.25 per hour multiplied by 29.6 L. The oral label reports F near 1, modeled here as 1. The example spans two illustrative doses.",
     [
-      { label: "Adult pulmonary tuberculosis PK study", url: "https://journals.asm.org/doi/10.1128/aac.01378-08" },
+      { label: "Adult pulmonary tuberculosis PK study", url: "https://pubmed.ncbi.nlm.nih.gov/19564361/" },
       { label: "DailyMed ZYVOX label, section 12.3", url: "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=6e70e63b-bfd5-478d-a8ee-8ba22c9efabd" },
     ],
   ),

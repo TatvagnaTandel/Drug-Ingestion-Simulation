@@ -13,12 +13,13 @@
 
 import {
   drugTopicQuery,
-  parseSummary,
+  pubmedSearchIds,
+  pubmedSummaryArticles,
   TOPIC_QUERIES,
   topicForOrgan,
   type LiteratureResult,
   type LiteratureTopic,
-} from "@/lib/pubmed";
+} from "./pubmed";
 
 const EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const TOOL = "dib-literature-strip";
@@ -30,8 +31,9 @@ export type DrugLiterature = {
   error: "pubmed-unreachable" | "bad-drug-name" | null;
 };
 
-type CacheKey = string;
-const cache = new Map<CacheKey, Promise<unknown>>();
+type Articles = LiteratureResult["articles"];
+const cache = new Map<string, Promise<Articles>>();
+const LOOKUP_TIMEOUT_MS = 8000;
 let nextRequest = Promise.resolve();
 
 function requestSlot(): Promise<void> {
@@ -40,28 +42,25 @@ function requestSlot(): Promise<void> {
   return slot;
 }
 
-async function getJson(url: URL): Promise<unknown> {
-  // One quiet retry: from a conference Wi-Fi or a laptop about to sleep,
-  // a single miss is often a transient refusal rather than an outage.
-  // The second failure is reported as unreachable — the step reads fine
-  // without the strip.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await requestSlot();
-      const response = await fetch(url, { signal: AbortSignal.timeout(6000) });
-      if (!response.ok) throw new Error(`PubMed returned ${response.status}`);
-      return await response.json();
-    } catch (error) {
-      if (attempt === 1) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 700));
-    }
-  }
+async function getJson(url: URL, signal: AbortSignal): Promise<unknown> {
+  await requestSlot();
+  signal.throwIfAborted();
+  const response = await fetch(url, { signal });
+  if (!response.ok) throw new Error(`PubMed returned ${response.status}`);
+  return await response.json();
 }
 
-function cached<T>(key: CacheKey, load: () => Promise<T>): Promise<T> {
+function cached(key: string, load: (signal: AbortSignal) => Promise<Articles>): Promise<Articles> {
   const hit = cache.get(key);
-  if (hit) return hit as Promise<T>;
-  const pending = load().catch((error: unknown) => {
+  if (hit) return hit;
+  const signal = AbortSignal.timeout(LOOKUP_TIMEOUT_MS);
+  const pending = new Promise<Articles>((resolve, reject) => {
+    const onTimeout = () => reject(signal.reason);
+    signal.addEventListener("abort", onTimeout, { once: true });
+    load(signal).then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onTimeout);
+    });
+  }).catch((error: unknown) => {
     cache.delete(key);
     throw error;
   });
@@ -69,7 +68,7 @@ function cached<T>(key: CacheKey, load: () => Promise<T>): Promise<T> {
   return pending;
 }
 
-async function articlesForQuery(query: string): Promise<LiteratureResult["articles"]> {
+async function articlesForQuery(query: string, signal: AbortSignal): Promise<LiteratureResult["articles"]> {
   const searchUrl = new URL(`${EUTILS}/esearch.fcgi`);
   searchUrl.search = new URLSearchParams({
     db: "pubmed",
@@ -79,8 +78,7 @@ async function articlesForQuery(query: string): Promise<LiteratureResult["articl
     sort: "relevance",
     tool: TOOL,
   }).toString();
-  const search = (await getJson(searchUrl)) as { esearchresult?: { idlist?: string[] } };
-  const pmids = search.esearchresult?.idlist ?? [];
+  const pmids = pubmedSearchIds(await getJson(searchUrl, signal));
   if (pmids.length === 0) return [];
   const summaryUrl = new URL(`${EUTILS}/esummary.fcgi`);
   summaryUrl.search = new URLSearchParams({
@@ -89,8 +87,8 @@ async function articlesForQuery(query: string): Promise<LiteratureResult["articl
     retmode: "json",
     tool: TOOL,
   }).toString();
-  const summary = await getJson(summaryUrl);
-  return parseSummary("whole-body", summary).articles;
+  const summary = await getJson(summaryUrl, signal);
+  return pubmedSummaryArticles(summary);
 }
 
 export async function fetchTopicLiterature(
@@ -101,7 +99,7 @@ export async function fetchTopicLiterature(
     ? (requested as LiteratureTopic)
     : topicForOrgan(null);
   try {
-    const articles = await cached(`topic:${topic}`, () => articlesForQuery(TOPIC_QUERIES[topic]));
+    const articles = await cached(`topic:${topic}`, (signal) => articlesForQuery(TOPIC_QUERIES[topic], signal));
     return { label: topic, articles, error: null };
   } catch {
     return { label: topic, articles: [], error: "pubmed-unreachable" };
@@ -114,7 +112,7 @@ export async function fetchDrugLiterature(catalogueName: string): Promise<DrugLi
     return { label: null, articles: [], error: "bad-drug-name" };
   }
   try {
-    const articles = await cached(`drug:${name}`, () => articlesForQuery(drugTopicQuery(name)));
+    const articles = await cached(`drug:${name}`, (signal) => articlesForQuery(drugTopicQuery(name), signal));
     return { label: name, articles, error: null };
   } catch {
     return { label: name, articles: [], error: "pubmed-unreachable" };

@@ -1,21 +1,25 @@
-/**
- * The fixed disclaimer, rendered once in the root layout so that it is present
- * on EVERY route — including before a simulation has run. The wording is fixed
- * (docs/PRD.md §Safety) and must not be paraphrased.
- *
- * Bar: 48px on mobile (two lines), 40px from md up, --surface at 92% with a
- * 1px top border, 12/16 centred.
- */
+"use client";
+
+import { useEffect, useState } from "react";
+
 export const DISCLAIMER_TEXT =
   "Educational simulator. Population-average estimate. Not medical or dosing advice.";
 
+const preference = "anatomy-theatre-disclaimer-collapsed";
+
 export default function Disclaimer() {
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    try { setCollapsed(localStorage.getItem(preference) === "yes"); } catch { /* Storage can be unavailable. */ }
+  }, []);
   return (
-    <footer
-      role="note"
-      className="fixed inset-x-0 bottom-0 z-40 flex h-12 items-center justify-center border-t border-line bg-surface/96 px-4 text-center font-sans text-[12px] leading-4 text-ink-2 backdrop-blur-sm md:h-10"
-    >
-      {DISCLAIMER_TEXT}
+    <footer className="theatre-footer-note">
+      <p>{collapsed ? "Educational use only." : DISCLAIMER_TEXT}</p>
+      <button type="button" className="theatre-disclaimer-toggle" aria-expanded={!collapsed} onClick={() => {
+        const next = !collapsed;
+        setCollapsed(next);
+        try { localStorage.setItem(preference, next ? "yes" : "no"); } catch { /* The active page still updates. */ }
+      }}>{collapsed ? "Show disclaimer" : "Collapse disclaimer"}</button>
     </footer>
   );
 }

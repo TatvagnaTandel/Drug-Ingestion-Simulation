@@ -12,8 +12,9 @@
  */
 
 import * as THREE from "three";
-import { loadAnatomyModel, type PartAnchor } from "@/components/anatomy/model";
-import { baseFor, isolationOf, type IsolationGroup } from "@/components/anatomy/contract";
+import { disposeAnatomyModel, loadAnatomyModel, type LoadedAnatomy, type PartAnchor } from "@/components/anatomy/model";
+import { ATLAS_TINT, BASE, baseFor, isolationOf, type IsolationGroup } from "@/components/anatomy/contract";
+import { ATLAS_CONTEXT_FADE, ATLAS_FOV, ATLAS_KEY_LIGHT, ORGAN_VIEWS, OVERVIEW_VIEW, RENAL_OCCLUDERS, ROUTE_VIEWS, frameAtlas, guidedAtlasBounds, positionAtlasCamera } from "@/components/anatomy/atlas-view";
 import {
   BODY_FRAGMENT,
   BODY_VERTEX,
@@ -26,14 +27,13 @@ import { regionOf, type BrainRegion } from "@/components/anatomy/regions";
 import { BRAIN_PART_NAMES } from "@/components/anatomy/part-names";
 import { createDoseJourney } from "./dose-journey";
 import type { DoseRoute } from "./playback";
+import { manageViewport, type SceneStatus } from "@/components/anatomy/viewport-runtime";
 
 /** The organs the simulator can focus on. */
 export type FocusOrgan = "brain" | "heart" | "lungs" | "liver" | "kidneys" | "gut";
 
 export type SimulatorSceneOptions = {
-  reducedMotion?: boolean;
-  maxDpr?: number;
-  onStatus?: (status: "loading" | "ready" | "error") => void;
+  onStatus?: (status: SceneStatus) => void;
   /** Called when the pointer lands on a part of the brain. */
   onBrainRegion?: (region: BrainRegion | null) => void;
 };
@@ -44,17 +44,11 @@ export type SimulatorScene = {
   /** Frames the stage and positions the dose on its route. */
   setStage(organ: FocusOrgan | null, route: DoseRoute | undefined, fraction: number, immediate: boolean): void;
   setIsolation(organ: FocusOrgan | null): void;
-  /** Stops the render loop while the canvas is out of sight. */
-  setPaused(paused: boolean): void;
+  subscribeFrame(notify: () => void): () => void;
   /** The brain region under the pointer, and where it is on the canvas. */
   getBrainRegion(): { region: BrainRegion; x: number; y: number } | null;
   dispose(): void;
 };
-
-const CAMERA_FOV = 32;
-const BODY_COLOR = 0x4fb8ff;
-const TINT = 0x22d3ee;
-const BRAIN_COLOR = 0x9e4d4d;
 
 /** Raw sRGB components — custom shaders write straight to the framebuffer. */
 function srgb(hex: number): THREE.Color {
@@ -65,19 +59,12 @@ function srgb(hex: number): THREE.Color {
   );
 }
 
-/** How far back the camera sits to frame a part of the given size. */
-function frameDistance(radius: number, aspect: number): number {
-  const vertical = (CAMERA_FOV * Math.PI) / 360;
-  const horizontal = Math.atan(Math.tan(vertical) * aspect);
-  return Math.max(0.65, (radius * 1.18) / Math.sin(Math.min(vertical, horizontal)));
-}
-
 export function createSimulatorScene(
   canvas: HTMLCanvasElement,
   options: SimulatorSceneOptions = {}
 ): SimulatorScene {
-  const reducedMotion = options.reducedMotion ?? false;
-  const maxDpr = options.maxDpr ?? 2;
+  const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const load = new AbortController();
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -90,22 +77,22 @@ export function createSimulatorScene(
 
   const scene = new THREE.Scene();
   const journey = createDoseJourney(scene);
-  const camera = new THREE.PerspectiveCamera(CAMERA_FOV, 1, 0.05, 100);
+  const camera = new THREE.PerspectiveCamera(ATLAS_FOV, 1, 0.05, 100);
   camera.position.set(0, 0, 6.4);
 
-  const hemisphere = new THREE.HemisphereLight(0xbcd8ff, 0x0a1420, 0.7);
+  const keyLight = ATLAS_KEY_LIGHT.clone();
+  const hemisphere = new THREE.HemisphereLight(0xfff5e5, 0x766353, 0.7);
   scene.add(hemisphere);
-  const directional = new THREE.DirectionalLight(0xd8ecff, 0.88);
-  directional.position.set(3, 5, 4);
+  const directional = new THREE.DirectionalLight(0xfff8e9, 0.95);
   scene.add(directional);
 
   const bodyMaterial = new THREE.ShaderMaterial({
     vertexShader: BODY_VERTEX,
     fragmentShader: BODY_FRAGMENT,
     uniforms: {
-      uColor: { value: srgb(BODY_COLOR) },
+      uColor: { value: srgb(BASE.body) },
       uScan: { value: 10 },
-      uOpacity: { value: 0.85 },
+      uOpacity: { value: 0.7 },
     },
     transparent: true,
     depthWrite: false,
@@ -115,10 +102,10 @@ export function createSimulatorScene(
     vertexShader: BRAIN_VERTEX,
     fragmentShader: BRAIN_FRAGMENT,
     uniforms: {
-      uBase: { value: srgb(BRAIN_COLOR) },
-      uTint: { value: srgb(TINT) },
+      uBase: { value: srgb(BASE.brain) },
+      uTint: { value: srgb(ATLAS_TINT) },
       uFocus: { value: 0 },
-      uLightDir: { value: directional.position.clone().normalize() },
+      uLightDir: { value: keyLight },
       uLightIntensity: { value: directional.intensity },
       uFade: { value: 1 },
     },
@@ -133,14 +120,14 @@ export function createSimulatorScene(
       fragmentShader: ORGAN_FRAGMENT,
       uniforms: {
         uBase: { value: srgb(baseFor(name)) },
-        uTint: { value: srgb(TINT) },
+        uTint: { value: srgb(ATLAS_TINT) },
         uLevel: { value: 0 },
         uFocus: { value: 0 },
         // The camera is close enough here that the organ has to stay
         // recognisable, so the drug shows as brightness and a rim rather
         // than repainting the tissue.
         uTintMix: { value: 0.12 },
-        uLightDir: { value: directional.position.clone().normalize() },
+        uLightDir: { value: keyLight },
         uLightIntensity: { value: directional.intensity },
         uFade: { value: 1 },
       },
@@ -150,9 +137,10 @@ export function createSimulatorScene(
   };
 
   // The model, once it has loaded.
-  let model: THREE.Group | null = null;
+  let figureBounds: THREE.Box3 | null = null;
   let anchors = new Map<string, PartAnchor>();
-  let tinted: Array<{ mesh: THREE.Mesh; id: string; material: THREE.ShaderMaterial }> = [];
+  let model: LoadedAnatomy | null = null;
+  let tinted: LoadedAnatomy["tinted"] = [];
   let brainTargets: THREE.Mesh[] = [];
   let ready = false;
 
@@ -178,20 +166,24 @@ export function createSimulatorScene(
   const cameraFrom = target.clone();
   let distanceFrom = distance;
   let azimuthFrom = azimuth;
-  let cameraElapsed = 1.25;
+  let wantedFov = ATLAS_FOV;
+  let fovFrom = ATLAS_FOV;
+  let cameraSeconds = OVERVIEW_VIEW.seconds;
+  let cameraElapsed = cameraSeconds;
+  let routeFraction = 0;
 
   // Each mesh fades independently while the camera frames the selected organ.
   let isolation: FocusOrgan | null = null;
   const isolatedMaterials: { material: THREE.ShaderMaterial; group: IsolationGroup | null }[] = [];
   let isolateBlend = 0;
 
-  function updateIsolation(dt: number): void {
+  function updateFades(focus: FocusOrgan | null, dt: number, reducedMotion: boolean): void {
     const rate = reducedMotion ? 1 : 1 - Math.pow(0.0015, dt);
     const target = isolation ? 1 : 0;
     isolateBlend = THREE.MathUtils.lerp(isolateBlend, target, rate);
     bodyMaterial.uniforms.uOpacity.value *= 1 - isolateBlend;
     for (const { material, group } of isolatedMaterials) {
-      const wanted = isolation && group !== isolation ? 0 : 1;
+      const wanted = focus && group !== focus ? (isolation ? 0 : ATLAS_CONTEXT_FADE) : 1;
       const next = THREE.MathUtils.lerp(material.uniforms.uFade.value, wanted, rate);
       const fade = Math.abs(next - wanted) < 0.002 ? wanted : next;
       material.uniforms.uFade.value = fade;
@@ -264,120 +256,89 @@ export function createSimulatorScene(
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerleave", onPointerLeave);
 
-  function resize(): void {
-    const width = canvas.clientWidth || 1;
-    const height = canvas.clientHeight || 1;
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxDpr));
-    renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
-    applyFraming(true);
-  }
-
-  let lastFrame = performance.now();
-  let raf = 0;
-  let disposed = false;
-  /** Set when the canvas is off screen or the tab is hidden. */
-  let paused = false;
-  /** The focus the camera is easing towards, and where it is now. */
   let focusValue = 0;
   let wantedFocusValue = 0;
 
-  function frame(now: number): void {
-    if (disposed) return;
-    raf = requestAnimationFrame(frame);
-    const dt = Math.min((now - lastFrame) / 1000, 0.05);
-    lastFrame = now;
-
-    if (paused) return;
-
+  function frame(dt: number, reducedMotion: boolean): void {
     if (reducedMotion) {
       target.copy(wantedTarget);
       distance = wantedDistance;
       azimuth = wantedAzimuth;
+      camera.fov = wantedFov;
       focusValue = wantedFocusValue;
     } else {
-      cameraElapsed = Math.min(1.25, cameraElapsed + dt);
-      const t = cameraElapsed / 1.25;
+      cameraElapsed = Math.min(cameraSeconds, cameraElapsed + dt);
+      const t = cameraElapsed / cameraSeconds;
       const eased = t * t * (3 - 2 * t);
       target.lerpVectors(cameraFrom, wantedTarget, eased);
       distance = THREE.MathUtils.lerp(distanceFrom, wantedDistance, eased);
       azimuth = THREE.MathUtils.lerp(azimuthFrom, wantedAzimuth, eased);
+      camera.fov = THREE.MathUtils.lerp(fovFrom, wantedFov, eased);
       // The organ lights as the camera arrives, rather than the instant the
       // step changes.
       focusValue += (wantedFocusValue - focusValue) * (1 - Math.pow(0.001, dt));
     }
 
-    bodyMaterial.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.13, 0.85,
+    bodyMaterial.uniforms.uOpacity.value = THREE.MathUtils.lerp(0.56, 0.82,
       THREE.MathUtils.smoothstep(distance, 2, 5.5));
 
-    updateIsolation(dt);
+    const focus = isolation ?? wantedFocus ?? (wantedRoute === "swallow" ? "gut" : null);
+    updateFades(focus, dt, reducedMotion);
 
     // The focus value drives the shader, so the organ brightens with the
     // camera rather than snapping ahead of it.
-    for (const { id, material } of tinted) {
-      const focus = isolation ?? wantedFocus;
-      const wanted = focus === id ? 1 : 0;
-      material.uniforms.uFocus.value = wanted === 1 ? focusValue * 0.6 : 0;
+    for (const { id, material, mesh } of tinted) {
+      const wanted = focus === "kidneys" ? isolationOf(mesh.name) === focus : focus === id;
+      material.uniforms.uFocus.value = wanted ? focusValue * 0.6 : 0;
     }
-    brainMaterial.uniforms.uFocus.value = (isolation ?? wantedFocus) === "brain" ? focusValue : 0;
+    brainMaterial.uniforms.uFocus.value = focus === "brain" ? focusValue : 0;
 
-    camera.position.set(
-      target.x + Math.sin(azimuth) * distance,
-      target.y + distance * 0.035,
-      target.z + Math.cos(azimuth) * distance
-    );
-    camera.lookAt(target);
+    camera.updateProjectionMatrix();
+    positionAtlasCamera(camera, target, azimuth, distance);
+    keyLight.copy(ATLAS_KEY_LIGHT).applyQuaternion(camera.quaternion);
+    directional.position.copy(keyLight);
 
+    journey.setRoute(isolation ? undefined : wantedRoute, routeFraction, reducedMotion);
     journey.render(dt, renderer.getPixelRatio(), ready);
     renderer.render(scene, camera);
   }
 
-  // The scene sleeps when it cannot be seen: off screen, or in a hidden tab.
-  const onVisibility = () => {
-    paused = document.hidden;
-    if (!paused) lastFrame = performance.now();
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-
-  const resizeObserver = new ResizeObserver(resize);
-  resizeObserver.observe(canvas);
-  resize();
-  raf = requestAnimationFrame(frame);
+  const viewport = manageViewport(canvas, renderer, camera, "guided",
+    () => applyFraming(true), frame, () => options.onStatus?.("error"));
+  canvas.dataset.anatomyScene = "guided";
 
   options.onStatus?.("loading");
   void loadAnatomyModel(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/models/human_anatomy_simulator.glb`,
     { body: bodyMaterial, brain: brainMaterial, organ: makeOrganMaterial },
-    (error) => {
-      if (!disposed) console.error("Simulator anatomy could not be loaded", error);
-    }
+    (error) => console.error("Simulator anatomy could not be loaded", error),
+    load.signal,
   )
     .then((loaded) => {
-      if (disposed) {
-        for (const mesh of loaded.meshes.values()) mesh.geometry.dispose();
-        for (const material of loaded.materials) material.dispose();
+      if (load.signal.aborted) {
+        disposeAnatomyModel(loaded.group, loaded.materials);
         return;
       }
-      model = loaded.group;
+      model = loaded;
+      figureBounds = loaded.bounds;
       anchors = loaded.anchors;
-      tinted = loaded.tinted as typeof tinted;
+      tinted = loaded.tinted;
       brainTargets = loaded.brainTargets;
       isolatedMaterials.push({ material: brainMaterial, group: "brain" });
       for (const [name, material] of organMaterials) {
         isolatedMaterials.push({ material, group: isolationOf(name) });
       }
-      scene.add(model);
+      scene.add(loaded.group);
       ready = true;
       // The caller asked for a framing before the anatomy was here. Apply it
       // now, or the camera would never move.
       applyLevels(wantedLevels);
       applyFocus(isolation ?? wantedFocus);
-      applyFraming(false);
+      applyFraming(true);
       options.onStatus?.("ready");
     })
     .catch(() => {
-      if (!disposed) options.onStatus?.("error");
+      if (!load.signal.aborted) options.onStatus?.("error");
     });
 
   function applyLevels(levels: Record<string, number>): void {
@@ -393,44 +354,42 @@ export function createSimulatorScene(
     // passing. The brain is one material for all 64 of its parts, so it is
     // lit as a whole. The value itself is eased in the frame loop, so the
     // organ lights as the camera arrives.
-    wantedFocusValue = organ ? 1 : 0;
-    if (reducedMotion) focusValue = wantedFocusValue;
-    const showDigestiveTract = organ === "gut" || wantedRoute === "swallow";
+    wantedFocusValue = organ || wantedRoute === "swallow" ? 1 : 0;
+    if (motion.matches) focusValue = wantedFocusValue;
+    const showDigestiveTract = organ === "gut" || (!isolation && wantedRoute === "swallow");
     for (const { mesh, id } of tinted) {
       mesh.visible = !(showDigestiveTract && id === "liver") &&
-        !(organ === "heart" && id === "lungs");
+        !(organ === "heart" && id === "lungs") &&
+        !(organ === "kidneys" && RENAL_OCCLUDERS.includes(mesh.name));
     }
     if (organ !== "brain") clearBrain();
   }
 
   function applyFraming(immediate: boolean): void {
+    if (!figureBounds) return;
     cameraFrom.copy(target);
     distanceFrom = distance;
     azimuthFrom = azimuth;
-    cameraElapsed = immediate || reducedMotion ? 1.25 : 0;
+    fovFrom = camera.fov;
     const organ = isolation ?? wantedFocus;
-    const organAnchor = organ ? anchors.get(organ) : undefined;
-    const routeAnchor = !isolation && wantedRoute ? journey.anchor(wantedRoute) : undefined;
-    const anchor = organ === "lungs" ? organAnchor ?? routeAnchor : routeAnchor ?? organAnchor;
-    if (!anchor) {
-      wantedTarget.set(0, 0, 0);
-      wantedDistance = Math.max(6.4, 2.8 / camera.aspect);
-      wantedAzimuth = 0;
-    } else {
-      wantedTarget.copy(anchor.centre);
-      wantedDistance = frameDistance(anchor.radius, camera.aspect);
-      wantedAzimuth = organ === "kidneys" ? Math.PI : organ === "brain" ? 0.48 : 0;
-      if (!isolation && wantedRoute === "swallow") {
-        // Include the whole head and show the esophagus behind the windpipe.
-        wantedTarget.y += 0.065;
-        wantedDistance = frameDistance(anchor.radius + 0.19, camera.aspect);
-        wantedAzimuth = -0.65;
-      }
-    }
-    if (immediate || reducedMotion) {
+    const route = isolation ? undefined : wantedRoute;
+    const view = route ? ROUTE_VIEWS[route] : organ ? ORGAN_VIEWS[organ] : OVERVIEW_VIEW;
+    const subject = organ ? anchors.get(organ)?.bounds : undefined;
+    const track = route ? journey.bounds(route) : undefined;
+    const bounds = guidedAtlasBounds(view, figureBounds, subject, track, anchors.get("brain")?.bounds);
+    cameraSeconds = view.seconds;
+    cameraElapsed = immediate || motion.matches ? cameraSeconds : 0;
+    wantedAzimuth = view.azimuth;
+    wantedFov = view.fov;
+    bounds.getCenter(wantedTarget);
+    wantedDistance = frameAtlas(bounds, wantedTarget, wantedAzimuth, camera.aspect, wantedFov);
+    if (cameraElapsed === cameraSeconds) {
       target.copy(wantedTarget);
       distance = wantedDistance;
       azimuth = wantedAzimuth;
+      camera.fov = wantedFov;
+      camera.updateProjectionMatrix();
+      positionAtlasCamera(camera, target, azimuth, distance);
     }
   }
 
@@ -441,7 +400,8 @@ export function createSimulatorScene(
     },
 
     setStage(organ, route, fraction, immediate) {
-      journey.setRoute(isolation ? undefined : route, reducedMotion ? 1 : fraction, immediate || reducedMotion);
+      routeFraction = fraction;
+      journey.setRoute(isolation ? undefined : route, fraction, immediate || motion.matches);
       if (organ !== wantedFocus || route !== wantedRoute) {
         wantedFocus = organ;
         wantedRoute = route;
@@ -456,13 +416,10 @@ export function createSimulatorScene(
       const focus = isolation ?? wantedFocus;
       applyFocus(focus);
       applyFraming(false);
-      if (isolation) journey.setRoute(undefined, 0, true);
+      journey.setRoute(isolation ? undefined : wantedRoute, routeFraction, true);
     },
 
-    setPaused(next) {
-      paused = next || document.hidden;
-      if (!paused) lastFrame = performance.now();
-    },
+    subscribeFrame: viewport.subscribeFrame,
 
     getBrainRegion() {
       if (!brainRegion || !brainPoint) return null;
@@ -470,21 +427,23 @@ export function createSimulatorScene(
     },
 
     dispose() {
-      disposed = true;
-      cancelAnimationFrame(raf);
-      resizeObserver.disconnect();
-      document.removeEventListener("visibilitychange", onVisibility);
-      canvas.removeEventListener("pointermove", onPointerMove);
-      canvas.removeEventListener("pointerleave", onPointerLeave);
-      journey.dispose();
-      scene.traverse((node) => {
-        const mesh = node as THREE.Mesh;
-        if (mesh.isMesh) mesh.geometry.dispose();
+      viewport.dispose(() => {
+        load.abort();
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerleave", onPointerLeave);
+        clearBrain();
+        journey.dispose();
+        const materials = [bodyMaterial, brainMaterial, ...organMaterials.values()];
+        if (model) disposeAnatomyModel(model.group, materials);
+        else for (const material of materials) material.dispose();
+        scene.clear();
+        model = null;
+        anchors.clear();
+        brainTargets = [];
+        tinted = [];
+        organMaterials.clear();
+        isolatedMaterials.length = 0;
       });
-      bodyMaterial.dispose();
-      brainMaterial.dispose();
-      for (const material of organMaterials.values()) material.dispose();
-      renderer.dispose();
     },
   };
 }

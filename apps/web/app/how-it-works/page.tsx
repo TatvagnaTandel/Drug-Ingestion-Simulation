@@ -3,7 +3,7 @@ import Link from "next/link";
 import TheatreNav from "@/components/theatre-nav";
 
 export const metadata: Metadata = {
-  title: "How it works — Drug-in-Body",
+  title: "How it works — Manava",
   description:
     "Play a guided example, explore the modeled concentration over time and download the simulation report.",
 };
@@ -14,14 +14,24 @@ export default function HowItWorksPage() {
       <TheatreNav />
       <main id="main" tabIndex={-1} className="theatre-document theatre-surface">
         <h1 className="mt-8 text-4xl font-semibold tracking-tight">How it works</h1>
-        <ol className="mt-8 list-decimal space-y-6 pl-5 marker:font-semibold marker:text-brand-text">
+        <div className="mt-5">
+          <Link
+            href="/simulator"
+            className="theatre-button theatre-primary"
+          >
+            Open simulator
+            <span aria-hidden="true">→</span>
+          </Link>
+        </div>
+        <ol className="mt-8 list-decimal space-y-6 pl-6 [&>li]:pl-2 marker:font-semibold marker:text-brand-text">
           <li>
             <h2 className="text-xl font-semibold">Play a study example</h2>
             <p className="mt-2 leading-7 text-ink-2">
               Choose levetiracetam or linezolid to start. Follow the capsule into the stomach, then watch the gold trail
               move from the small intestine through the liver, heart and lungs to the rest of the body.
-              Each arrival pauses for four seconds. Organ details alternate beside the centered model,
-              with the previous stop in the model panel.
+            </p>
+            <p className="mt-2 leading-7 text-ink-2">
+              The camera holds at each arrival for four seconds as model time continues. The current stage appears next to the anatomy, with earlier values available under Previous stop.
               The animation illustrates a common oral route for the first dose. The timeline and values account for
               the entire dose schedule.
             </p>
@@ -51,29 +61,20 @@ export default function HowItWorksPage() {
         <section className="mt-10 border-t border-line pt-8" aria-labelledby="equations-title">
           <h2 id="equations-title" className="text-xl font-semibold">The model behind the curve</h2>
           <div className="my-5 space-y-2 rounded-lg border border-line bg-page p-4 font-mono text-sm" aria-label="One-compartment model equations">
-            <p>dA<sub>g</sub>/dt = −k<sub>a</sub> A<sub>g</sub></p>
-            <p>dA/dt = F k<sub>a</sub> A<sub>g</sub> − (CL/V) A</p>
+            <p>dA<sub className="text-xs">g</sub>/dt = −k<sub className="text-xs">a</sub> A<sub className="text-xs">g</sub></p>
+            <p>dA/dt = F k<sub className="text-xs">a</sub> A<sub className="text-xs">g</sub> − (CL/V) A</p>
             <p>C = A/V</p>
           </div>
           <p className="text-sm leading-7 text-ink-2">
-            A<sub>g</sub> is the amount available in the gut, A is the central amount, and C is the central concentration.
-            The absorption constant k<sub>a</sub> controls transfer from the gut. F is bioavailability, CL is clearance,
+            A<sub className="text-xs">g</sub> is the amount available in the gut, A is the central amount, and C is the central concentration.
+            The absorption constant k<sub className="text-xs">a</sub> controls transfer from the gut. F is bioavailability, CL is clearance,
             and V is distribution volume. Each dose enters the gut compartment at its scheduled time plus any specified absorption lag.
           </p>
           <p className="mt-3 text-sm leading-7 text-ink-2">
-            Peak concentration is the largest sampled C value. The clearance checkpoint is the first time after the final dose
-            when C falls below 5% of that peak and remains below it through the run window.
+            Peak concentration is the largest sampled C value. The model uses the first sustained fall below 5% of that peak
+            after the last dose to place the late walkthrough stages where possible. The 5% value is an animation reference.
           </p>
         </section>
-        <div className="mt-8">
-          <Link
-            href="/simulator"
-            className="theatre-button theatre-primary"
-          >
-            Open simulator
-            <span aria-hidden="true">→</span>
-          </Link>
-        </div>
       </main>
     </div>
   );

@@ -22,7 +22,7 @@ import { type Drug, type SimResult } from "@dib/engine";
 import type { DrugPkRow } from "@dib/data-client";
 
 /** One curve colour per medicine, in the order medicines are added. */
-export const DRUG_COLORS = ["#38bdf8", "#f472b6", "#facc15", "#34d399", "#c084fc"] as const;
+export const DRUG_COLORS = ["#176888", "#9a3566", "#895611", "#216747", "#69399a"] as const;
 
 /** One medicine's own engine run, labelled for the panel and the report. */
 export type MedicationRun = {
@@ -30,6 +30,11 @@ export type MedicationRun = {
   name: string;
   color: string;
   result: SimResult;
+  /**
+   * The cited-parameter run, kept beside a what-if run. Present only when the
+   * visitor has selected a clearance scenario; the baseline is never replaced.
+   */
+  baseline?: SimResult;
 };
 
 /** The caption every multi-drug surface carries. */

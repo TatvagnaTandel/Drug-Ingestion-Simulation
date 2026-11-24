@@ -5,6 +5,8 @@ import {
   articleMetaLine,
   articleUrl,
   parseSummary,
+  pubmedSearchIds,
+  pubmedSummaryArticles,
   topicForOrgan,
   type LiteratureTopic,
 } from "../lib/pubmed";
@@ -124,5 +126,17 @@ describe("article helpers", () => {
     expect(
       articleMetaLine({ pmid: "1", title: "t", journal: "J", pubDate: "2009" })
     ).toBe("J · 2009");
+  });
+});
+
+describe("PubMed response validation", () => {
+  it("treats an upstream error as a failed lookup instead of an empty result", () => {
+    expect(() => pubmedSearchIds({ error: "Rate limit exceeded" })).toThrow();
+    expect(() => pubmedSummaryArticles({ error: "Unavailable" })).toThrow();
+  });
+
+  it("only links valid numeric PMIDs", () => {
+    expect(pubmedSearchIds({ esearchresult: { idlist: ["32208795", "../invalid"] } })).toEqual(["32208795"]);
+    expect(pubmedSummaryArticles({ result: { uids: ["../invalid"], "../invalid": { title: "Unexpected" } } })).toEqual([]);
   });
 });

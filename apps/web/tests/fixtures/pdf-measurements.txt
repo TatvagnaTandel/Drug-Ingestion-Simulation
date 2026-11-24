@@ -1,0 +1,14 @@
+Weight (kg): 72
+Patient age 42 years
+Serum Creatinine 1.1 (0.6–1.3) mg/dL
+Dose: 2 mg/kg
+Dose (mg): 0.25 g
+Dose: 125 mg
+Dose -5 mg
+Dose time: 30 min
+Weight: 160 lb
+Dose: 1,250 mg
+Dose: 50–100 mg
+Dose: 50
+Drug concentration 2 mg/mL
+Observation period | 48 | h

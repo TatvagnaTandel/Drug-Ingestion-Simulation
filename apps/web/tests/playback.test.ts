@@ -1,75 +1,88 @@
 import { describe, expect, it } from "vitest";
 import { simulate } from "@dib/engine";
 import { exampleDrug } from "../lib/example-drug";
-import { buildStages, playbackAt, progressAt, readMoment, stageMotion, TRAVEL_FRACTION } from "../components/simulator/playback";
-import { conditionById } from "../components/simulator/condition";
+import { advanceJourney, advancePlayback, buildStages, playbackAt, readMoment, TRAVEL_MS } from "../components/simulator/playback";
 
 describe("guided playback", () => {
-  const scenario = conditionById("neuro");
   const result = {
     tH: [0, 2, 3, 5, 8, 24, 26, 48],
     concMgPerL: [0, 0, 4, 8, 6, 1, 10, 0.5],
-    timeToClearH: 48,
   };
 
-  it("visits the oral dose and first peak even if a repeat dose creates the global peak", () => {
-    const stages = buildStages(result, [2, 24], scenario);
-    expect(stages.find(({ organ }) => organ === "gut")?.hours).toBe(2);
-    expect(stages.find(({ organ }) => organ === "brain")?.hours).toBe(5);
-    expect(stages.at(-1)?.hours).toBe(48);
-    expect(stages.map(({ hours }) => hours)).toEqual(stages.map(({ hours }) => hours).sort((a, b) => a - b));
-    expect(playbackAt(stages, progressAt(stages, 25)).hours).toBeCloseTo(25);
-  });
-
-  it("takes oral doses through the portal and pulmonary circuits before distribution", () => {
-    const stages = buildStages(result, [2, 24], scenario);
+  it("maps all nine stages and Complete to unique, reversible hours around the first peak", () => {
+    const stages = buildStages(result, [2, 24]);
     expect(stages.flatMap((stage) => stage.route ? [stage.route] : [])).toEqual([
       "swallow", "absorption", "portal", "right-heart", "lungs", "left-heart", "brain", "liver", "kidneys",
     ]);
-    expect(stages.find(({ route }) => route === "swallow")?.hours).toBe(2);
-    expect(buildStages(result, [2], conditionById("general")).some(({ route }) => route === "lungs")).toBe(true);
-  });
-
-  it("holds the arrival time and marker through each reading pause", () => {
-    const stages = buildStages(result, [2, 24], scenario);
-    for (let index = 1; index < stages.length - 1; index++) {
-      for (const fraction of [TRAVEL_FRACTION, 0.7, 0.99]) {
-        expect(stageMotion(index + fraction)).toEqual({ fraction: 1, holding: true });
-        expect(playbackAt(stages, index + fraction).hours).toBe(stages[index].hours);
-      }
-    }
-    expect(stageMotion(3.1).fraction).toBeGreaterThan(0);
-    expect(stageMotion(3.1).holding).toBe(false);
-  });
-
-  it("keeps seeking reversible and modeled time continuous across stops", () => {
-    const stages = buildStages(result, [2, 24], scenario);
-    for (const hours of [0, 0.1, 1.9, 2, 2.5, 4, 5, 10, 24, 47.9, 48]) {
-      expect(playbackAt(stages, progressAt(stages, hours)).hours).toBeCloseTo(hours);
-    }
-    for (let index = 1; index < stages.length; index++) {
-      expect(playbackAt(stages, index - 0.00001).hours).toBeCloseTo(playbackAt(stages, index).hours, 3);
+    expect(stages.find(({ route }) => route === "brain")?.hours).toBe(5);
+    expect(stages.at(-1)?.hours).toBe(48);
+    expect(stages.every((stage, index) => index === 0 || stage.hours > stages[index - 1].hours)).toBe(true);
+    for (const [index, stage] of stages.entries()) {
+      expect(playbackAt(stages, stage.hours)).toEqual({ index, fraction: 1, holding: true });
     }
   });
 
-  it("handles a dose on the final sample and still lets the viewer visit each stage", () => {
-    const stages = buildStages({ ...result, concMgPerL: result.tH.map(() => 0) }, [48], scenario);
-    expect(playbackAt(stages, 0)).toEqual({ index: 0, hours: 0 });
-    expect(playbackAt(stages, 1)).toEqual({ index: 1, hours: 48 });
-    expect(progressAt(stages, 48)).toBe(stages.length - 1);
-    expect(playbackAt(stages, stages.length - 1).hours).toBe(48);
+  it("identifies travel vs arrival using the scrubbed hour alone", () => {
+    const stages = buildStages(result, [2, 24]);
+    const lungsIndex = stages.findIndex(({ route }) => route === "lungs");
+    const lungs = stages[lungsIndex];
+    expect(playbackAt(stages, (lungs.startsAtH + lungs.hours) / 2)).toEqual({ index: lungsIndex, fraction: 0.5, holding: false });
+    expect(advancePlayback(stages, lungs.startsAtH, TRAVEL_MS)).toBe(lungs.hours);
+    expect(playbackAt(stages, lungs.startsAtH - 0.001).index).toBe(lungsIndex - 1);
   });
 
-  it("shows the full gut dose at its exact off-grid time", () => {
+  it("plays the opening swallow while the model stays at hour zero", () => {
+    const stages = buildStages(result, [0]);
+    const opening = { hours: 0, swallowElapsedMs: 0 };
+    expect(playbackAt(stages, opening.hours, opening.swallowElapsedMs)).toEqual({ index: 0, fraction: 0, holding: false });
+
+    const halfway = advanceJourney(stages, opening, TRAVEL_MS / 2);
+    expect(halfway.hours).toBe(0);
+    expect(playbackAt(stages, halfway.hours, halfway.swallowElapsedMs)).toEqual({ index: 0, fraction: 0.5, holding: false });
+
+    const arrived = advanceJourney(stages, halfway, TRAVEL_MS / 2);
+    expect(arrived.hours).toBe(0);
+    expect(playbackAt(stages, arrived.hours, arrived.swallowElapsedMs)).toEqual({ index: 0, fraction: 1, holding: true });
+    expect(advanceJourney(stages, arrived, 100).hours).toBe(advancePlayback(stages, 0, 100));
+    expect(advanceJourney(stages, opening, TRAVEL_MS + 100)).toEqual(advanceJourney(stages, arrived, 100));
+  });
+
+  it("keeps all route stops accessible when the first dose is on the final sample", () => {
+    const stages = buildStages({ ...result, concMgPerL: result.tH.map(() => 0) }, [48]);
+    expect(stages).toHaveLength(10);
+    expect(stages.every((stage, index) => index === 0 || stage.hours > stages[index - 1].hours)).toBe(true);
+    expect(playbackAt(stages, 48).index).toBe(stages.length - 1);
+  });
+
+  it("reads the same values as the engine at a scrubbed off-grid time", () => {
+    const hours = 8.99;
+    const input = {
+      profile: { ageYears: 30, weightKg: 70, sex: "other" as const },
+      drug: exampleDrug,
+      doses: [{ drugId: exampleDrug.id, doseMg: 100, timeH: 0 }],
+      tEndH: 12,
+    };
+    const curve = simulate(input);
+    const engine = simulate({ ...input, sampleAtH: [hours] });
+    const position = engine.tH.indexOf(hours);
+    const moment = readMoment(curve, hours);
+    expect(moment.hours).toBe(hours);
+    expect(moment.concMgPerL).toBeCloseTo(engine.concMgPerL[position], 7);
+    expect(moment.gutMg).toBeCloseTo(engine.gutMg[position], 4);
+    expect(moment.bodyMg).toBeCloseTo(engine.bodyMg[position], 4);
+    expect(moment.eliminationMgPerH).toBeCloseTo(engine.eliminationMgPerH[position], 5);
+  });
+
+  it("preserves the gut jump at its exact off-grid time, including scheduled lag", () => {
     const timeH = 0.17;
     const curve = simulate({
       profile: { ageYears: 30, weightKg: 70, sex: "other" },
-      drug: exampleDrug,
+      drug: { ...exampleDrug, tlag_h: 0.1 },
       doses: [{ drugId: exampleDrug.id, doseMg: 100, timeH }],
       tEndH: 1,
-      sampleAtH: [timeH],
+      sampleAtH: [timeH + 0.1],
     });
-    expect(readMoment(curve, timeH - 0.001).gutMg).toBe(0);
-    expect(readMoment(curve, timeH).gutMg).toBe(100);
+    expect(readMoment(curve, 0.269).gutMg).toBe(0);
+    expect(readMoment(curve, 0.27).gutMg).toBe(100);
   });
 });

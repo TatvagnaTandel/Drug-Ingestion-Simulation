@@ -1,0 +1,54 @@
+.landing .theatre-nav { position: static; background: transparent; border: 0; backdrop-filter: none; }
+.landing .theatre-nav-inner { max-width: 1680px; padding-inline: clamp(24px, 6vw, 100px); }
+.landing-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.03fr) minmax(0, 1fr);
+  max-width: 1680px;
+  margin-inline: auto;
+  padding-inline: clamp(24px, 6vw, 100px);
+  column-gap: clamp(24px, 5vw, 96px);
+}
+.landing-rotation {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  position: sticky;
+  top: 20px;
+  align-self: start;
+  height: min(86svh, 900px);
+  margin: 20px 0;
+}
+.landing-rotation picture {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  aspect-ratio: 9 / 16;
+  margin-inline: auto;
+  mask-image: linear-gradient(to right, transparent, #000 13%, #000 87%, transparent),
+    linear-gradient(to bottom, #000 86%, transparent);
+  mask-composite: intersect;
+  mix-blend-mode: multiply;
+}
+.landing-rotation img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.landing-intro, .landing-details { grid-column: 1; display: grid; align-content: center; }
+.landing-intro { grid-row: 1; min-height: calc(100svh - 65px); padding-block: 70px 100px; position: relative; }
+.landing-details { grid-row: 2; min-height: 58svh; border-top: 1px solid var(--line); padding-block: 56px; scroll-margin-top: 24px; }
+.landing h1, .landing h2 { font: 400 clamp(40px, 4.75vw, 82px)/1.06 var(--theatre-serif); letter-spacing: -.045em; margin: 0 0 26px; }
+.landing h2 { font-size: clamp(36px, 3.75vw, 64px); }
+.landing h1 span, .landing h2 span { color: #89401f; }
+.landing main p { max-width: 40ch; color: var(--ink-2); font-size: clamp(16px, 1.35vw, 20px); line-height: 1.6; }
+.landing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-top: 30px; }
+.landing-text-link, .landing-footer a { display: inline-flex; min-height: 44px; align-items: center; gap: 8px; font-size: .875rem; }
+.landing-text-link:hover, .landing-footer a:hover { text-decoration: underline; text-underline-offset: 4px; }
+.landing-scroll { position: absolute; bottom: 20px; left: 0; }
+.landing-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px max(6vw, 24px); color: var(--ink-3); border-top: 1px solid var(--line); }
+
+.landing-footer nav { display: flex; flex-wrap: wrap; gap: 0 24px; }
+
+@media (max-width: 800px) {
+  .landing-layout { grid-template-columns: minmax(0, 1fr); }
+  .landing-intro, .landing-rotation, .landing-details { grid-area: auto; }
+  .landing-intro { order: -1; min-height: auto; padding-block: 46px 72px; }
+  .landing-rotation { position: static; height: min(76svh, 640px); margin: 0 0 28px; }
+  .landing-details { min-height: 0; }
+}

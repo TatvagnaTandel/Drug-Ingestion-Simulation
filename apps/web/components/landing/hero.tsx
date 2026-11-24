@@ -362,7 +362,7 @@ export default function Hero() {
               >
                 <div className="hud-panel px-5 py-5">
                   <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-3">
-                    DRUG-IN-BODY <span className="text-brand-text">// LAB-01</span>
+                    MANAVA <span className="text-brand-text">// LAB-01</span>
                   </p>
                   <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-brand-text">Educational simulator</p>
                   <h1 className="mt-2 text-[36px] font-semibold leading-[40px] tracking-[-0.02em] text-ink">

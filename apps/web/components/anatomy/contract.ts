@@ -138,30 +138,26 @@ export const ORGAN_NODES: Record<Exclude<OrganId, "stomach">, string[]> = {
   heart: ["Heart"],
   liver: ["Liver"],
   lungs: ["Lung_L", "Lung_R"],
-  kidneys: ["Kidney_L", "Kidney_R"],
+  kidneys: [...GLB.kidneys, "RenalArtery_L", "RenalArtery_R", "RenalVein_L", "RenalVein_R"],
   gut: ["Stomach", "SmallIntestine"],
 };
 
-/**
- * Base colour per node group, raw sRGB.
- *
- * These came out of the .blend as the tissue's own colours, but those are
- * near-black on a dark panel, so each one is lifted here until it reads.
- */
+/** Tissue and body context colours in sRGB. */
 export const BASE: Record<string, number> = {
-  heart: 0x7d0f13,
-  liver: 0x5c1c18,
-  lung: 0xa83e44,
-  kidney: 0x6a1f22,
-  stomach: 0xa45042,
-  intestine: 0xb46848,
-  artery: 0x9e0e0e,
-  vein: 0x16227a,
-  brain: 0x9e4d4d,
-  // The airway carries no drug and is only scaffolding, so it is drawn dim
-  // rather than as a white tube that outshines the organs.
-  airway: 0x8e97a6,
+  body: 0x559ccf,
+  heart: 0xa54e45,
+  liver: 0x895047,
+  lung: 0xb77f73,
+  kidney: 0xa34f47,
+  stomach: 0xd38a6c,
+  intestine: 0xbd896f,
+  artery: 0xb05249,
+  vein: 0x5b83af,
+  brain: 0xaf7e71,
+  airway: 0xb7aea0,
 };
+
+export const ATLAS_TINT = 0x8dbbde;
 
 const ARTERY = new Set([
   "Aorta_Ascending",
@@ -203,6 +199,7 @@ const VEIN = new Set([
 
 /** The tissue colour a node is drawn in. */
 export function baseFor(name: string): number {
+  if (name === GLB.body) return BASE.body;
   if (name === "Heart") return BASE.heart;
   if (name === "Liver") return BASE.liver;
   if (name === "Kidney_L" || name === "Kidney_R") return BASE.kidney;

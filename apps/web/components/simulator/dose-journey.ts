@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import type { PartAnchor } from "@/components/anatomy/model";
 import type { DoseRoute } from "./playback";
 
 type Point = [number, number, number];
@@ -16,7 +15,8 @@ const leftLung: Point = [0.163, 0.81, 0.008];
 const arch: Point = [0.028, 0.944, -0.037];
 const abdominalAorta: Point = [0.025, 0.52, -0.067];
 const tracks: Record<DoseRoute, Point[][]> = {
-  swallow: [[[0, 1.28, 0.19], [0, 1.28, 0.08], [0, 1.19, -0.052],
+  // The atlas has no oral cavity mesh; cross the body surface at the lips.
+  swallow: [[[0, 1.27, 0.33], [0, 1.27, 0.153], [0, 1.263, 0.073], [0, 1.19, -0.052],
     [-0.008, 0.99, -0.082], [0.005, 0.79, -0.086], [-0.02, 0.62, -0.048], stomach]],
   absorption: [[stomach, [-0.092, 0.454, -0.01], [0.057, 0.434, -0.039],
     [0.032, 0.334, -0.011], [-0.066, 0.284, -0.016], bowel]],
@@ -42,6 +42,8 @@ const tracks: Record<DoseRoute, Point[][]> = {
 };
 
 const TAIL_POINTS = 11;
+const LINE_STEPS = 128;
+const SWALLOW_MOUTH_SAMPLE = 22;
 
 export function createDoseJourney(scene: THREE.Scene) {
   const group = new THREE.Group();
@@ -49,9 +51,9 @@ export function createDoseJourney(scene: THREE.Scene) {
   scene.add(group);
 
   const lineMaterial = new THREE.LineBasicMaterial({
-    color: 0xe59a37,
+    color: 0xffba88,
     transparent: true,
-    opacity: 0.82,
+    opacity: 0.76,
     depthTest: false,
     depthWrite: false,
   });
@@ -61,7 +63,7 @@ export function createDoseJourney(scene: THREE.Scene) {
     ));
     const bounds = new THREE.Box3();
     const lines = curves.map((curve) => {
-      const points = curve.getPoints(128);
+      const points = curve.getSpacedPoints(LINE_STEPS);
       for (const point of points) bounds.expandByPoint(point);
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), lineMaterial);
       line.renderOrder = 5;
@@ -69,24 +71,27 @@ export function createDoseJourney(scene: THREE.Scene) {
       group.add(line);
       return line;
     });
-    const anchor: PartAnchor = {
-      centre: bounds.getCenter(new THREE.Vector3()),
-      radius: bounds.getSize(new THREE.Vector3()).length() * 0.5,
-    };
-    return [id, { curves, lines, anchor }] as const;
+    return [id, { curves, lines, bounds }] as const;
   }));
 
-  const pillGeometry = new THREE.CapsuleGeometry(0.017, 0.04, 12, 24);
+  function segment(id: DoseRoute) {
+    const result = segments.get(id);
+    if (!result) throw new Error(`Missing anatomy path for ${id}`);
+    return result;
+  }
+
+  const pillGeometry = new THREE.CapsuleGeometry(0.014, 0.037, 12, 24);
   const pillVertices = pillGeometry.getAttribute("position");
   const pillColors = new Float32Array(pillVertices.count * 3);
-  const ivory = new THREE.Color(0xfff7d5);
-  const amber = new THREE.Color(0xffa42f);
+  const ivory = new THREE.Color(0xfff2dd);
+  const peach = new THREE.Color(0xf27d55);
   for (let i = 0; i < pillVertices.count; i++) {
-    (pillVertices.getY(i) >= 0 ? ivory : amber).toArray(pillColors, i * 3);
+    (pillVertices.getY(i) >= 0 ? ivory : peach).toArray(pillColors, i * 3);
   }
   pillGeometry.setAttribute("color", new THREE.BufferAttribute(pillColors, 3));
-  const pill = new THREE.Mesh(pillGeometry, new THREE.MeshBasicMaterial({
-    vertexColors: true, transparent: true, depthTest: false, depthWrite: false,
+  const pill = new THREE.Mesh(pillGeometry, new THREE.MeshPhongMaterial({
+    vertexColors: true, shininess: 32, specular: 0xb4927c, emissive: 0x4b2c20,
+    transparent: true, depthTest: false, depthWrite: false,
   }));
   pill.renderOrder = 7;
   group.add(pill);
@@ -105,7 +110,7 @@ export function createDoseJourney(scene: THREE.Scene) {
       varying float vStrength;
       void main() {
         vStrength = aStrength;
-        gl_PointSize = (4.0 + 19.0 * aStrength * aStrength) * uPixelRatio;
+        gl_PointSize = (2.0 + 8.0 * aStrength * aStrength) * uPixelRatio;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
@@ -113,10 +118,10 @@ export function createDoseJourney(scene: THREE.Scene) {
       varying float vStrength;
       void main() {
         float radius = length(gl_PointCoord - vec2(0.5)) * 2.0;
-        float halo = pow(max(0.0, 1.0 - radius), 1.6) * 0.72;
-        float core = 1.0 - smoothstep(0.26, 0.38, radius);
-        vec3 colour = mix(vec3(1.0, 0.62, 0.22), vec3(1.0, 0.98, 0.81), core);
-        gl_FragColor = vec4(colour, (halo + core * 0.9) * vStrength);
+        float disc = 1.0 - smoothstep(0.78, 1.0, radius);
+        float inner = 1.0 - smoothstep(0.52, 0.72, radius);
+        vec3 colour = mix(vec3(0.72, 0.43, 0.24), vec3(1.0, 0.93, 0.77), inner);
+        gl_FragColor = vec4(colour, disc * vStrength);
       }
     `,
     transparent: true,
@@ -135,13 +140,13 @@ export function createDoseJourney(scene: THREE.Scene) {
   let target = 0;
 
   return {
-    anchor(id: DoseRoute) {
-      return segments.get(id)!.anchor;
+    bounds(id: DoseRoute) {
+      return segment(id).bounds;
     },
     setRoute(id: DoseRoute | undefined, fraction: number, immediate: boolean) {
       if (route !== id) {
-        if (route) for (const line of segments.get(route)!.lines) line.visible = false;
-        if (id) for (const line of segments.get(id)!.lines) line.visible = true;
+        if (route) for (const line of segment(route).lines) line.visible = false;
+        if (id) for (const line of segment(id).lines) line.visible = true;
         route = id;
         immediate = true;
       }
@@ -151,14 +156,14 @@ export function createDoseJourney(scene: THREE.Scene) {
     render(dt: number, pixelRatio: number, modelReady: boolean) {
       group.visible = modelReady && route !== undefined;
       if (!modelReady || !route) return;
-      const { curves } = segments.get(route)!;
+      const { curves, lines } = segment(route);
       position = THREE.MathUtils.damp(position, target, 29, dt);
       pill.visible = route === "swallow";
-      tail.visible = !pill.visible;
       if (pill.visible) {
         curves[0].getPointAt(position, pill.position);
         pill.quaternion.setFromUnitVectors(up, curves[0].getTangentAt(position, tangent));
-        return;
+        const traced = Math.floor(position * LINE_STEPS) + 1 - SWALLOW_MOUTH_SAMPLE;
+        lines[0].geometry.setDrawRange(SWALLOW_MOUTH_SAMPLE, Math.max(0, traced));
       }
       tail.material.uniforms.uPixelRatio.value = pixelRatio;
       tailGeometry.setDrawRange(0, curves.length * TAIL_POINTS);

@@ -32,8 +32,8 @@ export function parsePrescription(text: string): ParsedPrescription {
     }
     const interval = Number(repeat[1]);
     const count = Number(repeat[2] ?? repeat[3]);
-    if (!Number.isFinite(interval) || interval <= 0 || count < 1 || count > MAX_DOSES_PER_DRUG) {
-      return { ok: false, error: `Use a positive interval and 1 to ${MAX_DOSES_PER_DRUG} doses.` };
+    if (!Number.isFinite(interval) || interval <= 0 || interval > 72 || count < 1 || count > MAX_DOSES_PER_DRUG) {
+      return { ok: false, error: `Use an interval above 0 and at most 72 hours, and 1 to ${MAX_DOSES_PER_DRUG} doses.` };
     }
     times = Array.from({ length: count }, (_, index) => Number((index * interval).toPrecision(15)));
   }

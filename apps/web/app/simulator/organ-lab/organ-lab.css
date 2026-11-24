@@ -1,0 +1,74 @@
+.organ-lab {
+  --lab-reference: #24623d;
+}
+
+.lab-play-tooltip {
+  visibility: hidden;
+  position: absolute;
+  inset: 100% auto auto 0;
+  margin-top: 4px;
+  z-index: 3;
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.lab-play-control:hover .lab-play-tooltip,
+.lab-play-control:focus-within .lab-play-tooltip {
+  visibility: visible;
+}
+
+.lab-layout {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: 1640px;
+}
+
+.lab-viewport {
+  height: clamp(275px, 50svh, 640px);
+}
+
+@media (min-width: 1100px) and (min-height: 700px) {
+  .lab-layout {
+    grid-template-columns: minmax(380px, 39%) minmax(0, 1fr);
+  }
+
+  .lab-anatomy {
+    position: sticky;
+    top: 84px;
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+  }
+
+  .lab-inputs, .lab-experiment {
+    grid-column: 1;
+  }
+
+  .lab-inputs { grid-row: 1; }
+  .lab-experiment { grid-row: 2; }
+}
+
+.lab-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  max-width: 1640px;
+  margin-inline: auto;
+  padding: 25px clamp(16px, 3vw, 44px) 12px;
+}
+
+.lab-heading {
+  font: 400 clamp(2.4rem, 4vw, 3.5rem)/1 var(--theatre-serif);
+}
+
+.lab-layout { padding-inline: clamp(16px, 3vw, 44px); }
+.lab-viewport { background: radial-gradient(ellipse at 55% 42%, #182e4a, #10172d 52%, #090e1c 82%); }
+.lab-viewport + .theatre-anatomy-key { border-top: 0; padding-block: 0; }
+.lab-play-control:hover .lab-play-tooltip { transition: visibility 0s 350ms; }

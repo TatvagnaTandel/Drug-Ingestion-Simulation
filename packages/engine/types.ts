@@ -1,7 +1,11 @@
+import type { OrganProfileSelection } from './organProfilesTypes';
+import type { ToxicityResult } from './toxicity';
+
 export interface BodyProfile {
   ageYears: number;
   weightKg: number;
   sex: 'M' | 'F' | 'other';
+  organProfiles?: OrganProfileSelection;
 }
 
 export interface DoseEvent {
@@ -21,6 +25,8 @@ export interface SimResult {
   timeToClearH: number | null;
   /** Non-fatal warnings, e.g. doses outside the range the source studied. */
   warnings: string[];
+  /** Illustrative teaching score when a studied dose ceiling is available. */
+  toxicity?: ToxicityResult;
 }
 
 /**
@@ -60,6 +66,8 @@ export interface SimInput {
   doses: DoseEvent[];
   tEndH: number;
   dtH?: number;
+  /** Illustrative multiplier on total clearance, after organ-profile scaling. */
+  clearanceMultiplier?: number;
   /** Additional output times shared by curves that will be combined. */
   sampleAtH?: readonly number[];
 }

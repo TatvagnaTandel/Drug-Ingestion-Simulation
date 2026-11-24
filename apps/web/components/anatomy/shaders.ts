@@ -1,21 +1,11 @@
-/**
- * The shaders the anatomy model is drawn with.
- *
- * Three looks: the glass skin, the organs that tint with the drug level, and
- * the brain. Shared by the landing figure and the simulator so the model
- * cannot look like two different models on two routes.
- */
-
-/** The skin: a thin glass shell whose edges catch the light. */
+/** Surface shaders shared by the landing figure and both simulators. */
 export const BODY_VERTEX = /* glsl */ `
-  varying vec3 vWorldNormal;
-  varying vec3 vViewDir;
-  varying float vWorldY;
+  varying vec3 vNormalW;
+  varying vec3 vPositionW;
   void main() {
     vec4 world = modelMatrix * vec4(position, 1.0);
-    vWorldNormal = normalize(mat3(modelMatrix) * normal);
-    vViewDir = normalize(cameraPosition - world.xyz);
-    vWorldY = world.y;
+    vNormalW = normalize(mat3(modelMatrix) * normal);
+    vPositionW = world.xyz;
     gl_Position = projectionMatrix * viewMatrix * world;
   }
 `;
@@ -24,108 +14,121 @@ export const BODY_FRAGMENT = /* glsl */ `
   uniform vec3 uColor;
   uniform float uScan;
   uniform float uOpacity;
-  varying vec3 vWorldNormal;
-  varying vec3 vViewDir;
-  varying float vWorldY;
+  varying vec3 vNormalW;
+  varying vec3 vPositionW;
   void main() {
-    vec3 n = normalize(vWorldNormal);
-    vec3 v = normalize(vViewDir);
-    // The skin is a thin sheet, so what reads is its edge: the light gathers
-    // where the surface turns away from the eye. The Fresnel term alone is
-    // not enough — on a sheet this thin, the whole surface catches it and
-    // the body turns into a solid white shell.
-    float facing = abs(dot(n, v));
-    // A dead zone in the middle of the term, so the flat of the sheet stays
-    // clear and the organs read through it.
-    float edge = smoothstep(0.45, 0.96, 1.0 - facing);
-    // The scan band is what makes it read as a hologram rather than a ghost:
-    // one horizontal band of light travelling down the body.
-    float band = exp(-pow((vWorldY - uScan) * 6.5, 2.0));
-    float alpha = edge * 0.85 + band * 0.12;
-    gl_FragColor = vec4(uColor * (0.85 + band * 1.5), alpha * uOpacity);
+    vec3 n = normalize(vNormalW);
+    vec3 v = normalize(cameraPosition - vPositionW);
+    float grazing = 1.0 - abs(dot(n, v));
+    float contour = pow(grazing, 2.7);
+    float edge = smoothstep(0.72, 0.99, grazing);
+    vec3 key = normalize(vec3(-0.56, 0.67, 0.53));
+    float softLight = 0.5 + 0.5 * dot(n, key);
+    float reflection = pow(max(dot(n, normalize(key + v)), 0.0), 10.0);
+    float scanOffset = (vPositionW.y - uScan) * 7.5;
+    float band = exp(-scanOffset * scanOffset);
+
+    float alpha = 0.15 + 0.17 * softLight + contour * 0.33 + edge * 0.14 + reflection * 0.15 + band * 0.06;
+    float highlight = clamp(0.35 * softLight + contour * 0.68 + reflection * 0.70 + band * 0.16, 0.0, 1.0);
+    vec3 colour = mix(uColor * 0.36, uColor, highlight);
+    gl_FragColor = vec4(colour, alpha * uOpacity);
   }
 `;
 
-/* One lit-with-tint shader for every organ, but with the level as a uniform:
-   the GLB organs are plain meshes, not an InstancedMesh. */
 export const ORGAN_VERTEX = /* glsl */ `
   varying vec3 vNormalW;
-  varying vec3 vViewDir;
+  varying vec3 vPositionW;
+  varying vec3 vPosition;
   void main() {
     vec4 world = modelMatrix * vec4(position, 1.0);
     vNormalW = normalize(mat3(modelMatrix) * normal);
-    vViewDir = normalize(cameraPosition - world.xyz);
+    vPositionW = world.xyz;
+    vPosition = position;
     gl_Position = projectionMatrix * viewMatrix * world;
+  }
+`;
+
+const TISSUE_LIGHTING = /* glsl */ `
+  uniform vec3 uBase;
+  uniform vec3 uTint;
+  uniform float uFocus;
+  uniform vec3 uLightDir;
+  uniform float uLightIntensity;
+  uniform float uFade;
+  varying vec3 vNormalW;
+  varying vec3 vPositionW;
+  varying vec3 vPosition;
+
+  float latticeValue(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+  }
+
+  float tissueGrain(vec3 p) {
+    vec3 cell = floor(p);
+    vec3 f = smoothstep(vec3(0.0), vec3(1.0), fract(p));
+    float low = mix(
+      mix(latticeValue(cell), latticeValue(cell + vec3(1, 0, 0)), f.x),
+      mix(latticeValue(cell + vec3(0, 1, 0)), latticeValue(cell + vec3(1, 1, 0)), f.x), f.y);
+    float high = mix(
+      mix(latticeValue(cell + vec3(0, 0, 1)), latticeValue(cell + vec3(1, 0, 1)), f.x),
+      mix(latticeValue(cell + vec3(0, 1, 1)), latticeValue(cell + vec3(1, 1, 1)), f.x), f.y);
+    return (mix(low, high, f.z) - 0.5) * (1.0 - smoothstep(0.45, 1.05, length(fwidth(p))));
+  }
+
+  vec3 shadeTissue(vec3 albedo, vec3 n, vec3 v, float sheenPower) {
+    vec3 key = normalize(uLightDir);
+    float keyAngle = clamp(0.25 + 0.75 * dot(n, key), 0.0, 1.0);
+    float keyLight = pow(keyAngle, 1.25) * uLightIntensity;
+    float fill = 0.38 + 0.1 * (n.y * 0.5 + 0.5) + 0.14 * max(dot(n, v), 0.0);
+    vec3 illumination = fill * vec3(0.92, 0.97, 1.0) + keyLight * vec3(0.70, 0.64, 0.58);
+
+    // Darken concave folds using the change in the mesh's normals across the surface.
+    vec3 dx = dFdx(vPositionW);
+    vec3 dy = dFdy(vPositionW);
+    float bend = (dot(dFdx(n), dx) + dot(dFdy(n), dy)) / max(dot(dx, dx) + dot(dy, dy), 1e-8);
+    float fold = 1.0 + clamp(bend * 0.025, -0.27, 0.06);
+    float grain = tissueGrain(vPosition * 185.0);
+    float sheen = pow(max(dot(n, normalize(key + v)), 0.0), sheenPower) * keyAngle * 0.105;
+
+    return albedo * illumination * fold * (1.0 + grain * 0.27) + vec3(1.0, 0.76, 0.64) * sheen;
   }
 `;
 
 export const ORGAN_FRAGMENT = /* glsl */ `
-  uniform vec3 uBase;
-  uniform vec3 uTint;
   uniform float uLevel;
-  uniform float uFocus;
   uniform float uTintMix;
-  uniform vec3 uLightDir;
-  uniform float uLightIntensity;
-  uniform float uFade;
-  varying vec3 vNormalW;
-  varying vec3 vViewDir;
+  ${TISSUE_LIGHTING}
   void main() {
     vec3 n = normalize(vNormalW);
+    vec3 v = normalize(cameraPosition - vPositionW);
     float level = clamp(uLevel, 0.0, 1.0);
     float focus = clamp(uFocus, 0.0, 1.0);
-    // How far the drug repaints the tissue towards the accent. The landing
-    // figure fills the organ with the accent; in the simulator the camera
-    // is close enough that the tissue has to stay legible, so the level
-    // shows as brightness and a rim instead.
-    vec3 body = mix(uBase, uTint, uTintMix * pow(level, 0.8));
-    float lambert = clamp(dot(n, normalize(uLightDir)), 0.0, 1.0);
-    // Lifted and self-lit: the model's own tissue colours are dark reds and
-    // would disappear against a dark panel, so the tissue carries its own
-    // glow and the level adds the accent on top.
-    vec3 lit = body * (0.55 + 0.45 * lambert * uLightIntensity) * 1.35;
-    float rim = pow(1.0 - abs(dot(n, normalize(vViewDir))), 2.6);
-    vec3 colour = lit * (1.0 + 0.35 * level) + uTint * (0.08 + 0.34 * level * rim);
-    // uFocus is the camera's attention: the organ the walkthrough is about
-    // is brighter than the ones it is passing. It brightens the tissue in
-    // its own colour rather than adding the accent on top — a dark organ
-    // lit only by the accent would turn blue and stop reading as tissue.
-    colour = colour * (1.0 + focus * 0.5) + uTint * focus * 0.08;
-    gl_FragColor = vec4(colour * uFade, uFade);
+    vec3 base = sRGBTransferEOTF(vec4(mix(uBase, uTint, uTintMix * pow(level, 0.8)), 1.0)).rgb;
+    vec3 tint = sRGBTransferEOTF(vec4(uTint, 1.0)).rgb;
+    float rim = pow(1.0 - abs(dot(n, v)), 2.6);
+    vec3 colour = shadeTissue(base, n, v, 21.0) * (1.0 + 0.18 * level + 0.34 * focus);
+    colour += tint * rim * (0.032 * focus + level * (0.07 + 0.16 * uTintMix));
+    gl_FragColor = vec4(colour, uFade);
+    #include <colorspace_fragment>
   }
 `;
 
-/* Brain: the tissue look, plus a Fresnel rim so the folds read as a solid form
-   inside the glass head. The GLB carries no per-vertex tone, so the tone
-   term is gone; the rim does the same job. */
-export const BRAIN_VERTEX = /* glsl */ `
-  varying vec3 vNormalW;
-  varying vec3 vViewDir;
-  void main() {
-    vec4 world = modelMatrix * vec4(position, 1.0);
-    vNormalW = normalize(mat3(modelMatrix) * normal);
-    vViewDir = normalize(cameraPosition - world.xyz);
-    gl_Position = projectionMatrix * viewMatrix * world;
-  }
-`;
+export const BRAIN_VERTEX = ORGAN_VERTEX;
 
 export const BRAIN_FRAGMENT = /* glsl */ `
-  uniform vec3 uBase;
-  uniform vec3 uTint;
-  uniform float uFocus;
-  uniform vec3 uLightDir;
-  uniform float uLightIntensity;
-  uniform float uFade;
-  varying vec3 vNormalW;
-  varying vec3 vViewDir;
+  ${TISSUE_LIGHTING}
   void main() {
     vec3 n = normalize(vNormalW);
-    float lambert = clamp(dot(n, normalize(uLightDir)), 0.0, 1.0);
-    float fill = clamp(dot(n, -normalize(uLightDir)), 0.0, 1.0);
+    vec3 v = normalize(cameraPosition - vPositionW);
+    vec3 base = sRGBTransferEOTF(vec4(uBase, 1.0)).rgb;
+    vec3 tint = sRGBTransferEOTF(vec4(uTint, 1.0)).rgb;
     float focus = clamp(uFocus, 0.0, 1.0);
-    vec3 lit = uBase * (0.62 + 0.34 * lambert * uLightIntensity + 0.12 * fill) * 1.35;
-    float rim = pow(1.0 - abs(dot(n, normalize(vViewDir))), 2.4);
-    lit += uTint * rim * (0.38 + focus * 0.7);
-    gl_FragColor = vec4(lit * uFade, uFade);
+    float rim = pow(1.0 - abs(dot(n, v)), 2.4);
+    vec3 colour = shadeTissue(base, n, v, 16.0) * (1.0 + 0.26 * focus);
+    colour += tint * rim * focus * 0.048;
+    gl_FragColor = vec4(colour, uFade);
+    #include <colorspace_fragment>
   }
 `;

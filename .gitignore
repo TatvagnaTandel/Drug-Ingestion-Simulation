@@ -23,3 +23,7 @@ data/.cache/
 # Python bytecode from the Blender scripts
 __pycache__/
 *.pyc
+
+# Local Playwright output
+/test-results/
+/playwright-report/

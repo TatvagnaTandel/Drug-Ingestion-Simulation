@@ -1,10 +1,11 @@
-import { buildReport } from "@dib/engine";
 import { SEPARATE_CURVES_CAPTION } from "@/lib/treatment";
 import { jsPDF } from "jspdf";
-import { EXAMPLE_BANNER } from "@/lib/example-drug";
 import { conditionById } from "./condition";
-import { readMoment, ROUTE_COPY } from "./playback";
-import { chartData, parameterRows, reportMetrics, type ReportData } from "./report-data";
+import { ROUTE_COPY } from "./playback";
+import {
+  CHECKPOINT_COLUMNS, ELIMINATION_NOTE, RESULT_FORMULAS, SERIES_LABELS, chartData,
+  checkpointRows, parameterRows, reportDisclaimers, reportMetrics, type ReportData, type Series,
+} from "./report-data";
 
 const PAGE_WIDTH = 210;
 const PAGE_HEIGHT = 297;
@@ -16,14 +17,13 @@ const MUTED = "#435665";
 const ACCENT = "#057787";
 const RULE = "#d4dfe6";
 
-const pdfText = (value: string) => value.replace(/[–—]/g, "-").replace(/[·•]/g, " | ").replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+const pdfText = (value: string) => value.replace(/[–—]/g, "-").replace(/[•]/g, " · ").replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
 
 export function generateReportPdf(data: ReportData): Blob {
   const { active, isExample, primaryRun, runs, stages, study, treatmentLabel } = data;
-  const result = primaryRun.result;
   const warnings = [...new Set(runs.flatMap(({ name, result }) => result.warnings.map((warning) => `${name}: ${warning}`)))];
   const doc = new jsPDF({ format: "a4", unit: "mm", compress: true });
-  doc.setProperties({ title: pdfText(`${treatmentLabel} | Drug-in-Body simulation`), subject: "Educational oral pharmacokinetic simulation" });
+  doc.setProperties({ title: pdfText(`${treatmentLabel} | Manava simulation`), subject: "Educational oral pharmacokinetic simulation" });
   let y = MARGIN;
 
   function reserve(height: number) {
@@ -95,7 +95,7 @@ export function generateReportPdf(data: ReportData): Blob {
     y += 1.5;
   }
 
-  paragraph("DRUG-IN-BODY  /  SIMULATION REPORT", { size: 10 });
+  paragraph("MANAVA  /  SIMULATION REPORT", { size: 10 });
   y += 3;
   if (/[^\x00-\xff]/.test(pdfText(treatmentLabel))) paragraph(treatmentLabel, { size: 22 });
   else heading(pdfText(treatmentLabel), 24);
@@ -104,80 +104,87 @@ export function generateReportPdf(data: ReportData): Blob {
   y += 5;
 
   for (const run of runs) {
-    reserve(40);
-    heading(pdfText(run.name), 12);
-    const metrics = reportMetrics(run.result);
-  const tileWidth = CONTENT / metrics.length;
-  metrics.forEach(({ label, value }, index) => {
-    const x = MARGIN + index * tileWidth;
-    doc.setFillColor("#eff6f8").roundedRect(x, y - 3, tileWidth - 3, 19, 2, 2, "F");
-    doc.setTextColor(MUTED).setFont("helvetica", "normal").setFontSize(9).text(label, x + 4, y + 3);
-    doc.setTextColor(ACCENT).setFont("helvetica", "bold").setFontSize(13).text(value, x + 4, y + 10);
-  });
-    y += 23;
-  }
-  paragraph("The 5% threshold uses the sampled peak and applies after the final dose.", { size: 9 });
-  y += 5;
-
-  reserve(70 + 5 * runs.length);
-  heading("Modeled central concentration (mg/L)");
-  const chart = chartData(runs);
-  const x = MARGIN + 14;
-  const width = CONTENT - 16;
-  const height = 46;
-  doc.setFont("helvetica", "normal").setFontSize(8).setTextColor(MUTED);
-  for (const tick of [0, 0.5, 1]) {
-    const tickY = y + tick * height;
-    doc.setLineWidth(0.18).setDrawColor(RULE).line(x, tickY, x + width, tickY);
-    doc.text((chart.max * (1 - tick)).toFixed(3), x - 2, tickY + 1, { align: "right" });
-    doc.text(`${chart.duration * tick} h`, x + width * tick, y + height + 5, { align: "center" });
-  }
-  const pdfColors = [ACCENT, "#b4376e", "#977019", "#247959", "#7851a6"];
-  chart.series.forEach(({ points }, index) => {
-    const segments = points.slice(1).map(([px, py], i) => [
-      (px - points[i][0]) * width,
-      (py - points[i][1]) * height,
-    ]);
-    const [px, py] = points[0];
-    doc.setDrawColor(pdfColors[index % pdfColors.length]).setLineWidth(0.55)
-      .lines(segments, x + px * width, y + py * height);
-  });
-  y += height + 12;
-  if (runs.length > 1) {
-    runs.forEach(({ name }, index) => {
-      doc.setDrawColor(pdfColors[index % pdfColors.length]).line(x, y - 1, x + 5, y - 1);
-      doc.text(pdfText(name), x + 8, y);
-      y += 5;
+    reserve(53);
+    if (/[^\x00-\xff]/.test(pdfText(run.name))) paragraph(run.name, { size: 12 });
+    else heading(pdfText(run.name), 12);
+    const tileWidth = CONTENT / 2;
+    reportMetrics(run.result).forEach(({ label, value }, index) => {
+      const x = MARGIN + index % 2 * tileWidth;
+      const top = y + Math.floor(index / 2) * 21;
+      doc.setFillColor("#eff6f8").roundedRect(x, top - 3, tileWidth - 3, 19, 2, 2, "F");
+      doc.setTextColor(MUTED).setFont("helvetica", "normal").setFontSize(9).text(pdfText(label), x + 4, top + 3);
+      doc.setTextColor(ACCENT).setFont("helvetica", "bold").setFontSize(13).text(pdfText(value), x + 4, top + 10);
     });
+    y += 44;
   }
+
+  const pdfColors = [ACCENT, "#b4376e", "#977019", "#247959", "#7851a6"];
+  function plot(metric: Series, height: number, note: string | undefined = undefined) {
+    reserve(height + 24 + (note ? 6 : 0) + (runs.length > 1 ? 5 * runs.length : 0));
+    heading(SERIES_LABELS[metric]);
+    if (note) paragraph(note, { size: 9 });
+    const chart = chartData(runs, metric);
+    const x = MARGIN + 16;
+    const width = CONTENT - 19;
+    doc.setFont("helvetica", "normal").setFontSize(8).setTextColor(MUTED);
+    for (const tick of [0, 0.5, 1]) {
+      const tickY = y + tick * height;
+      doc.setLineWidth(0.18).setDrawColor(RULE).line(x, tickY, x + width, tickY);
+      const label = tick === 1 ? "0" : (chart.max * (1 - tick)).toPrecision(3);
+      doc.text(label, x - 2, tickY + 1, { align: "right" });
+      doc.text(`${chart.duration * tick} h`, x + width * tick, y + height + 5, { align: "center" });
+    }
+    chart.series.forEach(({ points }, index) => {
+      const segments = points.slice(1).map(([px, py], i) => [
+        (px - points[i][0]) * width,
+        (py - points[i][1]) * height,
+      ]);
+      const [px, py] = points[0];
+      doc.setDrawColor(pdfColors[index % pdfColors.length]).setLineWidth(0.55)
+        .lines(segments, x + px * width, y + py * height);
+    });
+    y += height + 12;
+    if (runs.length > 1) {
+      runs.forEach(({ name }, index) => {
+        doc.setDrawColor(pdfColors[index % pdfColors.length]).line(x, y - 1, x + 5, y - 1);
+        doc.text(pdfText(name), x + 8, y);
+        y += 5;
+      });
+    }
+    y += 4;
+  }
+
+  plot("concMgPerL", 46, "Shared by Heart, Lungs, Brain");
+  plot("gutMg", 30);
+  plot("eliminationMgPerH", 30, ELIMINATION_NOTE);
+  heading("How this is computed");
+  for (const formula of RESULT_FORMULAS) paragraph(formula, { size: 9 });
   y += 4;
 
-  reserve(26 + 6 * stages.length);
+  const checkpoints = checkpointRows(data);
+  reserve(28 + 6 * checkpoints.length);
   heading("Guided playback checkpoints");
-  paragraph(primaryRun.name, { size: 9 });
-  paragraph("Model values at arrival, held during each reading pause.", { size: 9 });
+  paragraph(`${primaryRun.name} · Model values at each illustrative arrival time.`, { size: 9 });
   const columns = [MARGIN + 3, 59, 83, 112, 135, 164];
-  const tableLabels = ["Stage", "Time (h)", "Conc. (mg/L)", "Gut (mg)", "Central (mg)", "Elim. (mg/h)"];
   doc.setFont("helvetica", "bold").setFontSize(9).setTextColor(INK);
-  tableLabels.forEach((text, index) => doc.text(text, columns[index], y));
+  CHECKPOINT_COLUMNS.forEach((label, index) => doc.text(label, columns[index], y));
   y += 6;
-  for (const [index, stage] of stages.entries()) {
-    const moment = readMoment(result, stage.hours);
-    const row = [stage.label, stage.hours.toFixed(2), moment.concMgPerL.toFixed(3), moment.gutMg.toFixed(1), moment.bodyMg.toFixed(1), moment.eliminationMgPerH.toFixed(2)];
+  for (const [index, row] of checkpoints.entries()) {
     if (index % 2 === 0) doc.setFillColor("#eff6f8").rect(MARGIN, y - 4, CONTENT, 6, "F");
     doc.setTextColor(INK).setFont("helvetica", "normal").setFontSize(9);
     row.forEach((text, i) => doc.text(text, columns[i], y));
     y += 6;
   }
   y += 5;
-  paragraph(isExample ? EXAMPLE_BANNER : buildReport(result).disclaimer, { size: 9 });
+  for (const disclaimer of reportDisclaimers(data)) paragraph(disclaimer, { size: 9 });
 
   y += 5;
+  reserve(65);
   heading("Doses, model inputs and sources");
   const condition = conditionById(active.conditionId);
   paragraph(`Anatomy context: ${condition.label}`);
   if (study) paragraph("Fixed study estimates. The run uses the reported adult volume and clearance totals.");
-  else paragraph(`Profile: ${active.ageYears} years, ${active.weightKg} kg, ${active.sex}. Volume and clearance scale with weight.`);
+  else paragraph(`Profile: ${active.ageYears} years, ${active.weightKg} kg, ${active.sex || "sex unspecified"}. Volume and clearance scale with weight.`);
   if (!study && active.description.trim()) paragraph(`Case note: ${active.description.trim()}`);
 
   for (const row of parameterRows(data)) {
@@ -203,7 +210,7 @@ export function generateReportPdf(data: ReportData): Blob {
   }
   y += 5;
   heading("First-dose route", 12);
-  paragraph("The anatomy illustrates a common oral route. Checkpoint times and values come from the pharmacokinetic model.", { size: 9 });
+  paragraph("The anatomy illustrates a common oral route. The times mark illustrative windows derived from the modeled curve.", { size: 9 });
   for (const stage of stages) {
     if (stage.route) paragraph(`${stage.label}: ${ROUTE_COPY[stage.route]}`, { size: 9 });
   }
@@ -213,7 +220,7 @@ export function generateReportPdf(data: ReportData): Blob {
     doc.setPage(page);
     doc.setLineWidth(0.22).setDrawColor(RULE).line(MARGIN, PAGE_HEIGHT - 15, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 15);
     doc.setFont("helvetica", "normal").setFontSize(8).setTextColor(MUTED);
-    doc.text("Drug-in-Body Simulator", MARGIN, PAGE_HEIGHT - 9);
+    doc.text("Manava Simulator", MARGIN, PAGE_HEIGHT - 9);
     doc.text(`${page} / ${pages}`, PAGE_WIDTH - MARGIN, PAGE_HEIGHT - 9, { align: "right" });
   }
   return doc.output("blob");

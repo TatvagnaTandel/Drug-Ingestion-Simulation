@@ -31,6 +31,7 @@
     "validate:pk": "tsx scripts/validate-pk.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^20.0.0",
     "tsx": "^4.23.15",
     "typescript": "^5.4.0",

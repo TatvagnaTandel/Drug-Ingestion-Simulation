@@ -2,29 +2,29 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { ArrowDown, ArrowUpRight, Play, Save, ScanLine, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowUpRight, ChevronDown, Play, Save, ScanLine, SlidersHorizontal } from "lucide-react";
 import { simulate, buildReport, type BodyProfile, type DoseEvent } from "@dib/engine";
 import type { DataClient } from "@dib/data-client";
 import { getBrowserDataClient } from "@/lib/browser-data-client";
-import { DRUG_COLORS, SEPARATE_CURVES_CAPTION, type MedicationRun } from "@/lib/treatment";
+import { DRUG_COLORS, SEPARATE_CURVES_CAPTION } from "@/lib/treatment";
 import { exampleDrug, EXAMPLE_BANNER } from "@/lib/example-drug";
 import { STUDY_CASES } from "@/lib/study-cases";
 import { topicForOrgan } from "@/lib/pubmed";
 import SimulatorConsole, { type SimulatorInput } from "./console";
+import { hasSavedSetup, persistGuidedSetup, useGuidedSetup } from "@/lib/run-setup";
 import TimeDial from "./time-dial";
 import BodyFigure, { type SceneStatus } from "./body-figure";
-import OrganDetail from "./organ-detail";
-import OrganMonitor from "./organ-monitor";
+import OrganDetail, { MomentValues } from "./organ-detail";
 import JourneyRail from "./journey-rail";
 import TheatreNav from "../theatre-nav";
 import StepLiterature from "./step-literature";
-import RunResults, { ConcentrationChart, PdfAction, useReportPdf } from "./run-results";
-import { conditionById, levelsFor } from "./condition";
-import { buildStages, playbackAt, progressAt, readMoment, stageMotion, STAGE_MS, TRAVEL_FRACTION } from "./playback";
+import RunResults, { ModelChart, PdfAction, useReportPdf } from "./run-results";
+import { levelsFor } from "./condition";
+import { advanceJourney, buildStages, playbackAt, readMoment, timeLabel, TRAVEL_MS } from "./playback";
+import type { GuidedRun } from "./report-data";
 import type { FocusOrgan, SimulatorScene } from "./scene";
 
-type SexUi = "female" | "male" | "other";
-const toEngineSex = (s: SexUi): BodyProfile["sex"] =>
+const toEngineSex = (s: SimulatorInput["sex"]): BodyProfile["sex"] =>
   s === "female" ? "F" : s === "male" ? "M" : "other";
 
 const DEFAULT_INPUT: SimulatorInput = {
@@ -32,24 +32,29 @@ const DEFAULT_INPUT: SimulatorInput = {
   description: "",
   ageYears: 30,
   weightKg: 70,
-  sex: "other",
+  sex: "",
   drugs: [],
   tEndH: 48,
 };
 
-const OVERVIEW_MS = 1400;
 const buttonClass = "theatre-button";
 
 export default function Simulator() {
   const [studyId, setStudyId] = React.useState(STUDY_CASES[0].id);
   const [draft, setDraft] = React.useState<SimulatorInput>(DEFAULT_INPUT);
+  useGuidedSetup(setDraft, DEFAULT_INPUT);
+  React.useEffect(() => {
+    persistGuidedSetup(draft);
+  }, [draft]);
   const [active, setActive] = React.useState<SimulatorInput>(DEFAULT_INPUT);
-  const [runs, setRuns] = React.useState<MedicationRun[] | null>(null);
+  const [runs, setRuns] = React.useState<GuidedRun[] | null>(null);
   const [inspection, setInspection] = React.useState<FocusOrgan | null>(null);
-  const [monitorOpen, setMonitorOpen] = React.useState(false);
   const [simError, setSimError] = React.useState<string | null>(null);
-  const [progress, setProgress] = React.useState(0);
+  const [{ hours, swallowElapsedMs }, setPosition] = React.useState({ hours: 0, swallowElapsedMs: 0 });
+  const [scrubbing, setScrubbing] = React.useState(false);
+  const [usedSpace, setUsedSpace] = React.useState(false);
   const [playing, setPlaying] = React.useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = React.useState(1);
   const [readyToAdvance, setReadyToAdvance] = React.useState(false);
   const [scene, setScene] = React.useState<SimulatorScene | null>(null);
   const [sceneStatus, setSceneStatus] = React.useState<SceneStatus>("loading");
@@ -62,7 +67,7 @@ export default function Simulator() {
   const [client, setClient] = React.useState<DataClient | null>(null);
   const [signedInEmail, setSignedInEmail] = React.useState<string | null>(null);
   const [action, setAction] = React.useState<string | null>(null);
-  const [profileNotice, setProfileNotice] = React.useState<string | null>(null);
+  const [profileNotice, setProfileNotice] = React.useState<{ message: string; error: boolean } | null>(null);
   const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
@@ -76,10 +81,10 @@ export default function Simulator() {
 
   // Pre-fill the form from the stored profile once, when signed in.
   React.useEffect(() => {
-    if (!client || !signedInEmail) return;
+    if (!client || !signedInEmail || hasSavedSetup("guided")) return;
     let current = true;
     void client.profile.getProfile().then(({ data, error }) => {
-      if (!current || error || !data) return;
+      if (!current || error || !data || hasSavedSetup("guided")) return;
       setDraft((d) => ({
         ...d,
         ageYears: d.ageYears === DEFAULT_INPUT.ageYears ? data.ageYears : d.ageYears,
@@ -104,23 +109,22 @@ export default function Simulator() {
   const treatmentLabel = active.drugs.length === 1
     ? active.drugs[0].drug.name
     : `${active.drugs.length} medicines`;
-  const condition = conditionById(active.conditionId);
   const stripDrugs = React.useMemo(
     () => active.drugs.map(({ drug }) => ({ id: drug.id, name: drug.name })),
     [active.drugs],
   );
   const stages = React.useMemo(
-    () => result && subject ? buildStages(result, subject.doses.map(({ timeH }) => timeH), condition) : [],
-    [subject, condition, result],
+    () => result && subject ? buildStages(result, subject.doses.map(({ timeH }) => timeH), subject.drug.tlag_h) : [],
+    [subject, result],
   );
   const finalStage = Math.max(0, stages.length - 1);
-  const { index, hours } = playbackAt(stages, progress);
+  const motion = playbackAt(stages, hours, swallowElapsedMs);
+  const { index } = motion;
+  const moment = result ? readMoment(result, hours) : null;
   const stage = stages[index];
-  const finished = stages.length > 0 && progress >= finalStage;
+  const finished = stages.length > 0 && hours >= active.tEndH;
   const focus = stage?.organ ?? null;
   const route = stage?.route;
-  const motion = stageMotion(progress);
-  const detailOnRight = index % 2 === 1;
   const chosenStudy = STUDY_CASES.find((item) => item.id === studyId) ?? STUDY_CASES[0];
   const previousStage = stages[index - 1];
   const peakLevels = React.useMemo(() => {
@@ -140,8 +144,8 @@ export default function Simulator() {
   }, [scene, focus, route, motion.fraction, playing, inspection]);
 
   React.useEffect(() => {
-    scene?.setLevels(result && peakLevels ? levelsFor(readMoment(result, hours), peakLevels) : {});
-  }, [scene, result, hours, peakLevels]);
+    scene?.setLevels(moment && peakLevels ? levelsFor(moment, peakLevels) : {});
+  }, [scene, moment, peakLevels]);
 
   React.useEffect(() => {
     if (!playing || !result || readyToAdvance) return;
@@ -161,13 +165,13 @@ export default function Simulator() {
       const elapsed = Math.min(now - previous, 80);
       previous = now;
       if (!document.hidden) {
-        setProgress((value) => Math.min(finalStage, value + elapsed / (value < 1 ? OVERVIEW_MS : STAGE_MS)));
+        setPosition((value) => advanceJourney(stages, value, elapsed * playbackSpeed));
       }
       frame = requestAnimationFrame(advance);
     };
     frame = requestAnimationFrame(advance);
     return () => cancelAnimationFrame(frame);
-  }, [playing, readyToAdvance, finalStage, finished]);
+  }, [playing, readyToAdvance, finalStage, finished, stages, playbackSpeed]);
 
   // Bring the studio into view once when a run starts.
   React.useEffect(() => {
@@ -183,7 +187,8 @@ export default function Simulator() {
   function start(input: SimulatorInput, fromSetup = false) {
     const profile: BodyProfile = { ageYears: input.ageYears, weightKg: input.weightKg, sex: toEngineSex(input.sex) };
     try {
-      const sampleAtH = input.drugs.flatMap(({ doses }) => doses.map(({ timeH }) => timeH));
+      const sampleAtH = input.drugs.flatMap(({ drug, doses }) =>
+        doses.flatMap(({ timeH }) => [timeH, timeH + (drug.tlag_h ?? 0)]));
       const nextRuns = input.drugs.map(({ drug, doses }, index) => {
         const events: DoseEvent[] = doses.map((dose) => ({ ...dose, drugId: drug.id }));
         return { id: drug.id, name: drug.name, color: DRUG_COLORS[index % DRUG_COLORS.length], result: simulate({ profile, drug, doses: events, tEndH: input.tEndH, sampleAtH }) };
@@ -193,10 +198,11 @@ export default function Simulator() {
       setSimError("The model could not run with these inputs. Check the doses, parameters and simulation window.");
       return;
     }
+    if (fromSetup) persistGuidedSetup(input);
     launch.current = fromSetup ? "setup" : "studio";
     setActive(input);
     setInspection(null);
-    setProgress(0);
+    setPosition({ hours: 0, swallowElapsedMs: 0 });
     setReadyToAdvance(false);
     setPlaying(true);
     setSimError(null);
@@ -206,13 +212,13 @@ export default function Simulator() {
   function seek(next: number) {
     setInspection(null);
     setPlaying(false);
-    setProgress(next);
+    setPosition({ hours: next, swallowElapsedMs: next === 0 ? 0 : TRAVEL_MS });
   }
 
   const togglePlay = React.useCallback(() => {
     setInspection(null);
     if (finished) {
-      setProgress(0);
+      setPosition({ hours: 0, swallowElapsedMs: 0 });
       setPlaying(true);
     } else {
       setPlaying((value) => !value);
@@ -226,7 +232,7 @@ export default function Simulator() {
       const target = event.target;
       if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, button, a, summary, [role="button"], [role="combobox"], [role="textbox"]'))) return;
       event.preventDefault();
-      if (!event.repeat) togglePlay();
+      if (!event.repeat) { setUsedSpace(true); togglePlay(); }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -288,7 +294,7 @@ export default function Simulator() {
       profileSnapshot: {
         ageYears: active.ageYears,
         weightKg: active.weightKg,
-        sex: active.sex,
+        sex: active.sex || "other",
       },
       drugs,
       metrics: {
@@ -312,34 +318,36 @@ export default function Simulator() {
     const { error } = await client.profile.saveProfile({
       ageYears: draft.ageYears,
       weightKg: draft.weightKg,
-      sex: draft.sex,
+      sex: draft.sex || "other",
     });
-    setProfileNotice(error ? `Profile save failed: ${error.message}` : "Profile saved to your account.");
+    setProfileNotice({ error: Boolean(error), message: error ? `Profile save failed: ${error.message}` : "Profile saved to your account." });
   }, [client, draft]);
 
-  function replay() {
+  const replay = React.useCallback(() => {
     setInspection(null);
-    setProgress(0);
+    setPosition({ hours: 0, swallowElapsedMs: 0 });
     setPlaying(true);
     studioRef.current?.scrollIntoView({ block: "start" });
     studioRef.current?.querySelector<HTMLElement>("[data-playback-control]")?.focus({ preventScroll: true });
-  }
+  }, []);
 
   function jumpToStage(next: number) {
-    seek(next > 0 && next < finalStage ? next + TRAVEL_FRACTION : next);
+    const destination = stages[next];
+    if (destination) seek(destination.hours);
   }
 
-  const playLabel = finished ? "Replay" : playing ? "Pause" : progress > 0 ? "Resume" : "Play";
+  const playLabel = finished ? "Replay" : playing ? "Pause" : hours > 0 || swallowElapsedMs > 0 ? "Resume" : "Play";
   const intro = !result;
-  const currentStage = route && result
-    ? <OrganDetail key={route} stage={stage} result={result} hours={hours} holding={motion.holding} playing={playing} />
+  const currentStage = route && moment
+    ? <OrganDetail key={route} stage={stage} moment={moment} holding={motion.holding} playing={playing} scrubbing={scrubbing} />
     : (
       <div>
         <h2 className="mt-2 font-heading text-3xl">{finished ? "Journey complete" : "Follow the first dose"}</h2>
         <p className="mt-3 text-sm leading-6 text-ink-2">
-          {finished ? "Review the concentration curve, model inputs and sources." : "Watch the marker travel. The camera stops at each organ for four seconds."}
+          {finished ? "Review the concentration curve, model inputs and sources." : "Watch the marker travel. The camera slows at each checkpoint so you can read the model values."}
         </p>
-        {finished ? <div className="mt-4 flex flex-wrap gap-2"><PdfAction pdf={pdf} /><a onClick={() => setPlaying(false)} href="#simulation-results" className="theatre-button">Results <ArrowDown size={14} aria-hidden="true" /></a></div> : null}
+        {moment ? <MomentValues moment={moment} /> : null}
+        {finished ? <div className="mt-4"><PdfAction pdf={pdf} /></div> : null}
       </div>
     );
 
@@ -350,7 +358,7 @@ export default function Simulator() {
         {intro ? (
           <section className="theatre-hero" aria-labelledby="intro-title">
             <div className="theatre-intro">
-              <p className="theatre-eyebrow">Anatomy Theatre</p>
+              <p className="theatre-eyebrow">Manava</p>
               <h1 id="intro-title">Follow one dose <em>through the body.</em></h1>
               <p>Trace an oral dose through the gut, heart and lungs, and see how its modeled concentration changes over time.</p>
               <label htmlFor="study-case" className="mt-7 block text-xs font-medium text-ink">Study example</label>
@@ -365,37 +373,45 @@ export default function Simulator() {
               </div>
               {simError ? <p role="alert" className="mt-3 text-sm text-warn">{simError}</p> : null}
             </div>
-            <JourneyRail previewBrain={conditionById(chosenStudy.input.conditionId).organs.includes("brain")} />
+            <JourneyRail />
           </section>
         ) : runs && primaryRun ? (
           <section ref={studioRef} aria-label="Guided simulation" className="theatre-workspace">
             <JourneyRail stages={stages} index={index} onSelect={jumpToStage} />
-            <div className="theatre-stage" data-detail-side={detailOnRight ? "right" : "left"}>
-              <h1 className="sr-only">Anatomy Theatre simulator</h1>
+            <div className="theatre-stage">
+              <h1 className="sr-only">Manava simulator</h1>
               <div className="theatre-canvas">
                 <BodyFigure scene={scene} stageLabel={inspection ? null : route ? stage.label : null} onScene={setScene} onStatus={setSceneStatus} />
               </div>
-              <div className="theatre-stage-detail theatre-surface">
+              <div className="theatre-anatomy-key" aria-label="Anatomy colors">
+                <span>Amber · Dose route</span><span>Blue · Circulation</span><span>Dim · Inactive anatomy</span>
+              </div>
+            </div>
+            <aside className="theatre-readout theatre-card" aria-label="Model outputs">
+              <p className="sr-only" role="status">{route ? `Stage ${index + 1} of ${finalStage}: ${stage.label}` : "Journey complete"}</p>
+              <div className="theatre-stage-detail">
                 <p className="theatre-eyebrow">
-                  {inspection ? `Inspecting ${inspection}` : route ? `Stage ${index} of ${finalStage - 1} · ${primaryRun.name}` : primaryRun.name}
+                  {inspection ? `Inspecting ${inspection}` : route ? `Stage ${index + 1} of ${finalStage} · ${primaryRun.name}` : primaryRun.name}
                 </p>
                 {inspection ? (
                   <>
                     <h2 className="mt-2 font-heading text-3xl capitalize">{inspection}</h2>
-                    <p className="mt-3 text-sm leading-6 text-ink-2">Anatomy inspection at {hours.toFixed(2)} h.</p>
+                    <p className="mt-3 text-sm leading-6 text-ink-2">Explore the selected organ.</p>
+                    {moment ? <MomentValues moment={moment} /> : null}
                     <button type="button" className="theatre-button mt-4" onClick={() => setInspection(null)}>Back to journey</button>
                   </>
                 ) : currentStage}
               </div>
-            </div>
-            <aside className="theatre-readout theatre-surface" aria-label="Model outputs">
-              <p className="theatre-eyebrow">Model outputs</p>
-              <h2 className="mt-2 font-heading text-[1.65rem]">{treatmentLabel}</h2>
-              {previousStage?.route ? (
-                <div className="theatre-previous"><OrganDetail key={previousStage.route} stage={previousStage} result={result} hours={previousStage.hours} holding previous playing={false} /></div>
-              ) : <p className="my-3 text-xs leading-5 text-ink-2">The route is illustrative. The clock tracks modeled hours.</p>}
+              <h2 className="mt-4 text-sm font-semibold">Model outputs · {treatmentLabel}</h2>
               {runs.length > 1 ? <p className="my-2 text-xs text-ink-2">The guided values are for {primaryRun.name}.</p> : null}
-              <ConcentrationChart runs={runs} hours={hours} />
+              <ModelChart runs={runs} hours={hours} />
+              {previousStage?.route ? (
+                <details className="theatre-disclosure mt-3">
+                  <summary>Previous stop · {previousStage.label}<ChevronDown size={14} aria-hidden="true" /></summary>
+                  <p className="mt-2 font-mono text-xs tabular-nums text-ink-2"><span>{readMoment(result, previousStage.hours).concMgPerL.toFixed(3)} mg/L</span> {timeLabel(previousStage.hours)}</p>
+                </details>
+              ) : <p className="my-3 text-xs leading-5 text-ink-2">The route checkpoints illustrate anatomy. The clock tracks modeled hours.</p>}
+
               <div className="mt-5 border-t border-line pt-3">
                 <p className="mb-2 flex items-center gap-2 text-xs font-medium"><ScanLine size={14} aria-hidden="true" /> Inspect an organ</p>
                 <div className="theatre-organ-buttons">
@@ -416,9 +432,14 @@ export default function Simulator() {
                   </select>
                 </label>
               </div>
-              <TimeDial maxH={active.tEndH} hours={hours} onHours={(next) => seek(progressAt(stages, next))}
-                onTogglePlay={togglePlay} playLabel={playLabel} tmaxH={result.tmaxH} />
-              <div className="theatre-transport-results">
+              <TimeDial maxH={active.tEndH} hours={hours} onHours={seek}
+                onTogglePlay={togglePlay} playLabel={playLabel} tmaxH={result.tmaxH} cmax={result.cmaxMgPerL}
+                stages={stages} onScrubbing={setScrubbing} showSpaceHint={!usedSpace} />
+              <div className="theatre-transport-results flex flex-wrap items-center gap-2">
+                <select aria-label="Playback speed" className="theatre-select" value={playbackSpeed}
+                  onChange={(event) => setPlaybackSpeed(Number(event.currentTarget.value))}>
+                  {[1, 2, 4].map((speed) => <option key={speed} value={speed}>{speed}×</option>)}
+                </select>
                 <a className="theatre-button" href="#simulation-results">Results <ArrowDown size={14} aria-hidden="true" /></a>
               </div>
             </div>
@@ -427,38 +448,26 @@ export default function Simulator() {
 
         {runs && primaryRun ? (
           <>
-            <details className="theatre-surface theatre-monitor p-4" open={monitorOpen}
-              onToggle={(event) => setMonitorOpen(event.currentTarget.open)}>
-              <summary className="cursor-pointer font-medium">Organ monitor</summary>
-              {monitorOpen ? (
-                <OrganMonitor runs={runs} hours={hours} focus={inspection} onSelect={(organ) => {
-                  setPlaying(false);
-                  setInspection(inspection === organ ? null : organ);
-                  studioRef.current?.scrollIntoView({ block: "start" });
-                  studioRef.current?.querySelector<HTMLElement>("[data-playback-control]")?.focus({ preventScroll: true });
-                }} />
-              ) : null}
-            </details>
-            <RunResults runs={runs} primaryRun={primaryRun} active={active} study={study} isExample={isExample} treatmentLabel={treatmentLabel} pdf={pdf} onReplay={replay} />
+            <RunResults runs={runs} primaryRun={primaryRun} active={active} stages={stages} study={study} isExample={isExample} treatmentLabel={treatmentLabel} pdf={pdf} onReplay={replay} />
             {!isExample ? (
               <details
-                className="theatre-surface mt-3 p-4"
+                className="theatre-card theatre-disclosure mt-3 p-4"
                 onToggle={(event) => setShowLiterature(event.currentTarget.open)}
               >
-                <summary className="cursor-pointer font-medium">Related literature for {stage?.label.toLowerCase() ?? "the overview"}</summary>
+                <summary>Related literature for {stage?.label.toLowerCase() ?? "the overview"}<ChevronDown size={16} aria-hidden="true" /></summary>
                 {showLiterature ? <StepLiterature topic={topicForOrgan(inspection ?? focus)} drugs={stripDrugs} /> : null}
               </details>
             ) : null}
             {client ? (
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 {signedInEmail && !study && !isExample ? (
-                  <button type="button" className={buttonClass} onClick={() => void saveReport()} disabled={saving}>
+                  <button type="button" className={buttonClass} onClick={() => void saveReport()} disabled={saving} aria-busy={saving}>
                     <Save className="size-4" aria-hidden="true" /> {saving ? "Saving…" : "Save report to account"}
                   </button>
                 ) : !signedInEmail && !study && !isExample ? (
                   <Link href="/signin" className="text-sm text-brand-text underline">Sign in to save to your account</Link>
                 ) : null}
-                {action ? <p role="status" className="text-sm text-ink-2">{action}</p> : null}
+                {action ? <p role="status" className="theatre-toast text-sm">{action}</p> : null}
               </div>
             ) : null}
           </>
@@ -473,22 +482,31 @@ export default function Simulator() {
             {STUDY_CASES.map((item) => {
               const drug = item.input.drugs[0].drug;
               return (
-                <button key={item.id} type="button" className="theatre-surface study-card" aria-label={`Play ${drug.name}`} onClick={() => start(item.input)}>
-                  <span className="min-w-0"><span className="block font-heading text-2xl">{drug.name}</span><span className="mt-1 block text-sm text-ink-2">{item.doseLabel}</span></span>
+                <button key={item.id} type="button" className="theatre-surface study-card" onClick={() => start(item.input)}>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-brand-text">Play study</span>
+                    <span className="mt-1 block font-heading text-2xl">{drug.name}</span>
+                    <span className="mt-1 block text-sm text-ink-2">{item.doseLabel}</span>
+                  </span>
                   <ArrowUpRight size={18} aria-hidden="true" />
                 </button>
               );
             })}
           </div>
         </section>
-        <details ref={inputsRef} onToggle={(event) => { if (event.currentTarget.open) setPlaying(false); }} id="simulation-inputs" className="theatre-surface theatre-setup p-4 sm:p-6">
-          <summary className="cursor-pointer font-heading text-lg font-semibold">Set up a custom simulation</summary>
+        <details ref={inputsRef} onToggle={(event) => { if (event.currentTarget.open) setPlaying(false); }} id="simulation-inputs" className="theatre-card theatre-setup theatre-disclosure p-4 sm:p-6">
+          <summary className="font-heading text-lg">Set up a custom simulation<ChevronDown size={16} aria-hidden="true" /></summary>
           <div className="mt-4">
-            <SimulatorConsole value={draft} onChange={setDraft} onSubmit={() => start(draft, true)} error={simError} />
-            {client && signedInEmail ? (
-              <button type="button" onClick={() => void saveProfile()} className={`${buttonClass} mt-3`}>Save profile</button>
-            ) : null}
-            {signedInEmail && profileNotice ? <p role="status" className="mt-3 text-sm text-ink-2">{profileNotice}</p> : null}
+            <SimulatorConsole
+              value={draft}
+              onChange={setDraft}
+              onSubmit={() => start(draft, true)}
+              error={simError}
+              actions={client && signedInEmail ? (
+                <button type="button" onClick={() => void saveProfile()} className="theatre-button"><Save className="size-4" aria-hidden="true" /> Save profile</button>
+              ) : null}
+            />
+            {profileNotice ? <p role={profileNotice.error ? "alert" : "status"} className={`mt-3 text-sm ${profileNotice.error ? "text-warn" : "text-ink-2"}`}>{profileNotice.message}</p> : null}
           </div>
         </details>
 

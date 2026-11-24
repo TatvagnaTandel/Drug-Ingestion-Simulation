@@ -1,5 +1,7 @@
 import { SimInput, SimResult, DoseEvent } from './types';
 import { curveMetrics, sampleTimes } from './curve';
+import { computeOrganAdjustments } from './organProfiles';
+import { assessToxicity } from './toxicity';
 
 /**
  * One-compartment model with gut depot and first-order absorption:
@@ -18,7 +20,7 @@ import { curveMetrics, sampleTimes } from './curve';
  * in time order). RK4 splits steps at dose events and emits samples on a
  * shared output grid (default 0.05 h).
  */
-export function simulate(input: SimInput): SimResult {
+export function simulate(input: SimInput) {
   // ---- validation ---------------------------------------------------------
   if (!input || typeof input !== 'object') {
     throw new Error('simulate: input object is required');
@@ -83,7 +85,17 @@ export function simulate(input: SimInput): SimResult {
 
   // ---- model parameters (per-kg scaling, see header comment) ---------------
   const V = vPerKg * profile.weightKg; // L
-  const CL = clPerKg * profile.weightKg; // L/h
+  const { clearanceMultiplier, organProfileMultiplier, hepaticFactor, renalFactor } =
+    computeOrganAdjustments(profile.organProfiles, input.clearanceMultiplier);
+  if (organProfileMultiplier !== 1) {
+    warnings.push(
+      `The illustrative 50/50 hepatic and renal clearance model scaled total clearance to ${(organProfileMultiplier * 100).toFixed(0)}% (hepatic factor ${(hepaticFactor * 100).toFixed(0)}%, renal factor ${(renalFactor * 100).toFixed(0)}%).`
+    );
+  }
+  if (input.clearanceMultiplier != null && input.clearanceMultiplier !== 1) {
+    warnings.push(`The clearance what-if applies a further ×${input.clearanceMultiplier} to total model clearance.`);
+  }
+  const CL = clPerKg * profile.weightKg * clearanceMultiplier; // L/h
   const ke = CL / V; // 1/h
   if (!Number.isFinite(V) || V <= 0 || !Number.isFinite(ke)) {
     throw new Error('simulate: scaled volume and elimination rate must be finite');
@@ -112,9 +124,16 @@ export function simulate(input: SimInput): SimResult {
   let A = 0; // central compartment amount (mg)
   let doseIdx = 0;
 
+  const read = (hours: number) => ({
+    hours,
+    gutMg: Ag,
+    bodyMg: A,
+    concMgPerL: A / V,
+    eliminationMgPerH: ke * A,
+  });
+
   const record = () => {
-    const concentration = A / V;
-    const elimination = ke * A;
+    const { concMgPerL: concentration, eliminationMgPerH: elimination } = read(0);
     if (![Ag, A, concentration, elimination].every(Number.isFinite)) {
       throw new Error('simulate: model values exceed the supported numeric range');
     }
@@ -161,17 +180,41 @@ export function simulate(input: SimInput): SimResult {
     t = target;
   };
 
+  const eventIndexes: number[] = [];
   let lastDoseH = -Infinity;
-  for (const sample of tOut) {
+  const advanceWithDoses = (sample: number, trackLastDose = false) => {
     while (doseIdx < applicable.length && applicable[doseIdx].timeH <= sample) {
       const dose = applicable[doseIdx++];
       advanceTo(dose.timeH);
       Ag += dose.doseMg;
-      if (dose.doseMg > 0) lastDoseH = dose.timeH;
+      if (trackLastDose && dose.doseMg > 0) lastDoseH = dose.timeH;
     }
     advanceTo(sample);
+  };
+  for (const sample of tOut) {
+    advanceWithDoses(sample, true);
+    eventIndexes.push(doseIdx);
     record();
   }
+
+  // Reuse the same RK4 step and exact dose boundaries from the preceding sample.
+  const at = (hours: number) => {
+    const target = Math.min(tEndH, Math.max(0, hours));
+    let low = 0;
+    let high = tOut.length;
+    while (low + 1 < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (tOut[middle] <= target) low = middle;
+      else high = middle;
+    }
+
+    t = tOut[low];
+    Ag = gutOut[low];
+    A = bodyOut[low];
+    doseIdx = eventIndexes[low];
+    advanceWithDoses(target);
+    return read(target);
+  };
 
   return {
     tH: tOut,
@@ -181,5 +224,8 @@ export function simulate(input: SimInput): SimResult {
     eliminationMgPerH: elimOut,
     ...curveMetrics(tOut, concOut, lastDoseH),
     warnings,
-  };
+    toxicity: assessToxicity(drug, applicable, profile.organProfiles, clearanceMultiplier),
+    at,
+    eliminationHalfLifeH: ke > 0 ? Math.LN2 / ke : null,
+  } satisfies SimResult & { at: typeof at; eliminationHalfLifeH: number | null };
 }

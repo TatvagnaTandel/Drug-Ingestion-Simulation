@@ -14,6 +14,7 @@ import { isPublicSupabaseKey } from "../../packages/data-client/public-key";
  */
 
 const staticExport = process.env.STATIC_EXPORT === "1";
+const basePath = staticExport && process.env.SITES_EXPORT !== "1" ? "/dibmvp" : "";
 const publicSupabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
 
 // Next inlines public environment variables into the browser build.
@@ -24,13 +25,13 @@ if (publicSupabaseKey && publicSupabaseKey !== "paste-anon-key-here" && !isPubli
 const nextConfig: NextConfig = {
   /* One source of truth for the base path: the browser inlines this at build time,
      so client code can resolve static assets (the anatomy models) under it. */
-  env: { NEXT_PUBLIC_BASE_PATH: staticExport ? "/dibmvp" : "" },
+  env: { NEXT_PUBLIC_BASE_PATH: basePath },
   /* Allow importing the framework-free workspace packages (TS source). */
   transpilePackages: ["@dib/data-client", "@dib/engine", "@dib/summary"],
   ...(staticExport
     ? {
         output: "export" as const,
-        basePath: "/dibmvp",
+        basePath,
         trailingSlash: true,
       }
     : { cacheComponents: true, partialPrefetching: true }),

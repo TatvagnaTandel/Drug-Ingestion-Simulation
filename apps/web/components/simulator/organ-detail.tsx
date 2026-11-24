@@ -1,5 +1,6 @@
-import type { SimResult } from "@dib/engine";
-import { readMoment, ROUTE_COPY, type DoseRoute, type PlaybackStage } from "./playback";
+import { ChevronDown } from "lucide-react";
+import type { SimMoment } from "./condition";
+import { ROUTE_COPY, type DoseRoute, type PlaybackStage } from "./playback";
 
 const circulation = "https://www.nhlbi.nih.gov/health/heart/blood-flow";
 const digestion = "https://www.niddk.nih.gov/health-information/digestive-diseases/digestive-system-how-it-works";
@@ -46,7 +47,7 @@ const DETAILS: Record<DoseRoute, { title: string; detail: string; reading: strin
     title: "Arterial supply to the brain",
     detail: "This branch follows blood toward the brain. Entry into brain tissue depends on the medicine's ability to cross the blood–brain barrier.",
     reading: "This is a systemic concentration checkpoint. Brain exposure requires additional drug-specific parameters.",
-    source: "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=08e1bfea-7f3f-42d9-823d-f75080e664ff",
+    source: "https://pubmed.ncbi.nlm.nih.gov/27020469/",
   },
   body: {
     title: "Distribution to tissues",
@@ -68,17 +69,7 @@ const DETAILS: Record<DoseRoute, { title: string; detail: string; reading: strin
   },
 };
 
-export default function OrganDetail({ stage, result, hours, holding, previous = false, playing }: {
-  stage: PlaybackStage;
-  result: SimResult;
-  hours: number;
-  holding: boolean;
-  previous?: boolean;
-  playing: boolean;
-}) {
-  if (!stage.route) return null;
-  const info = DETAILS[stage.route];
-  const moment = readMoment(result, hours);
+export function MomentValues({ moment }: { moment: SimMoment }) {
   const figures = [
     ["Concentration", `${moment.concMgPerL.toFixed(3)} mg/L`],
     ["In the gut", `${moment.gutMg.toFixed(1)} mg`],
@@ -86,32 +77,46 @@ export default function OrganDetail({ stage, result, hours, holding, previous = 
     ["Elimination rate", `${moment.eliminationMgPerH.toFixed(2)} mg/h`],
   ];
   return (
-    <article className={`organ-detail ${previous ? "organ-detail-previous" : ""}`} data-organ-panel={previous ? "previous" : "current"} data-phase={holding ? "holding" : "travel"}>
-      <p className="text-xs font-medium text-brand-text" role={previous ? undefined : "status"}>
-        {previous ? "Previous stop" : holding ? playing ? "Arrived · reading pause" : "Arrived · paused" : playing ? "Travelling" : "Travel paused"}
-      </p>
-      {previous ? <p className="mt-2 font-heading text-xl font-semibold">{stage.label}</p> : <h2 className="mt-2 font-heading text-3xl font-semibold tracking-tight">{stage.label}</h2>}
-      <p className="mt-3 text-sm leading-relaxed text-ink-2">{ROUTE_COPY[stage.route]}</p>
-      {previous ? (
-        <p className="mt-4 font-mono text-sm tabular-nums text-ink-2">{hours.toFixed(2)} h · {moment.concMgPerL.toFixed(3)} mg/L</p>
-      ) : (
-        <>
-          <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-3" data-live-values>
-            {figures.map(([label, value]) => (
-              <div key={label} className="min-w-0">
-                <dt className="text-[11px] text-ink-3">{label}</dt>
-                <dd className="mt-1 font-mono text-sm tabular-nums text-brand-text">{value}</dd>
-              </div>
-            ))}
-          </dl>
-          <div className="mt-4 border-t border-line pt-3">
-            <p className="text-sm font-semibold">{holding ? info.title : "Coming into view"}</p>
-            <p className="mt-1.5 text-xs leading-5 text-ink-2">{holding ? info.detail : "The camera follows this part of the route. At arrival, playback holds for four seconds so you can read the organ details."}</p>
-            {holding ? <p className="mt-2 text-xs leading-5 text-ink-3">{info.reading}</p> : null}
+    <div className="mt-4" data-live-values>
+      <p className="text-xs text-ink-2">Now · At the current simulation time</p>
+      <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-3">
+        {figures.map(([label, value]) => (
+          <div key={label} className="min-w-0">
+            <dt className="text-xs text-ink-3">{label}</dt>
+            <dd className="mt-1 font-mono text-sm tabular-nums text-brand-text">{value}</dd>
           </div>
-          {holding ? <a href={info.source} target="_blank" rel="noreferrer" className="mt-3 inline-block text-xs text-brand-text underline underline-offset-4">Read the source</a> : null}
-        </>
-      )}
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+export default function OrganDetail({ stage, moment, holding, playing, scrubbing = false }: {
+  stage: PlaybackStage;
+  moment: SimMoment;
+  holding: boolean;
+  playing: boolean;
+  scrubbing?: boolean;
+}) {
+  if (!stage.route) return null;
+  const info = DETAILS[stage.route];
+  if (scrubbing) return <p className="theatre-stage-summary">{stage.label} · {ROUTE_COPY[stage.route]}</p>;
+  return (
+    <article className="organ-detail" data-organ-panel="current" data-phase={holding ? "holding" : "travel"}>
+      <p className="text-xs font-medium text-brand-text" role="status">
+        {holding ? "Checkpoint reached" : playing ? "Travelling" : "Travel paused"}
+      </p>
+      <h2 className="mt-2 font-heading text-3xl font-semibold tracking-tight">{stage.label}</h2>
+      <p className="mt-3 text-sm leading-relaxed text-ink-2">{ROUTE_COPY[stage.route]}</p>
+      <MomentValues moment={moment} />
+      {holding ? (
+        <details className="theatre-disclosure mt-3">
+          <summary>{info.title}<ChevronDown size={14} aria-hidden="true" /></summary>
+          <p className="mt-1.5 text-xs leading-5 text-ink-2">{info.detail}</p>
+          <p className="mt-2 text-xs leading-5 text-ink-3">{info.reading}</p>
+          <a href={info.source} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-brand-text underline underline-offset-4">Read the source</a>
+        </details>
+      ) : null}
     </article>
   );
 }

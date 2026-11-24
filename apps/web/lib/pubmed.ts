@@ -98,7 +98,9 @@ export function parseSummary(topic: LiteratureTopic, payload: unknown): Literatu
     return { topic, articles, error: null };
   }
   const result = (payload as { result?: Record<string, unknown> }).result;
-  const uids = Array.isArray(result?.uids) ? (result?.uids as string[]) : [];
+  const uids = Array.isArray(result?.uids)
+    ? result.uids.filter((id): id is string => typeof id === "string" && /^\d+$/.test(id))
+    : [];
   for (const uid of uids.slice(0, 3)) {
     const record = result?.[uid] as Record<string, unknown> | undefined;
     if (!record) continue;
@@ -117,4 +119,22 @@ export function parseSummary(topic: LiteratureTopic, payload: unknown): Literatu
 /** How the strip renders a journal line: "Br J Clin Pharmacol · 2019". */
 export function articleMetaLine(article: LiteratureArticle): string {
   return [article.journal, article.pubDate.split(" ")[0]].filter(Boolean).join(" · ");
+}
+
+export function pubmedSearchIds(payload: unknown): string[] {
+  if (!payload || typeof payload !== "object" || !("esearchresult" in payload)) {
+    throw new Error("Unexpected PubMed search response");
+  }
+  const result = payload.esearchresult;
+  if (!result || typeof result !== "object" || !("idlist" in result) || !Array.isArray(result.idlist)) {
+    throw new Error("Unexpected PubMed search response");
+  }
+  return result.idlist.filter((id): id is string => typeof id === "string" && /^\d+$/.test(id));
+}
+
+export function pubmedSummaryArticles(payload: unknown) {
+  if (!payload || typeof payload !== "object" || !("result" in payload)) {
+    throw new Error("Unexpected PubMed summary response");
+  }
+  return parseSummary("whole-body", payload).articles;
 }

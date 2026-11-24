@@ -8,16 +8,17 @@
  * lazily so `three` never lands in the first payload and never runs during
  * SSR.
  *
- * The overlays are plain DOM driven from a rAF loop, so moving the camera and
+ * The overlays use the scene’s render callbacks, so moving the camera and
  * pointing at the brain never cause a React render.
  */
 
-import { useEffect, useRef, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { useAnatomyViewport, ViewportFallback } from "@/components/anatomy/viewport-fallback";
+import type { SceneStatus } from "@/components/anatomy/viewport-runtime";
 import type { BrainRegion } from "@/components/anatomy/regions";
 import type { SimulatorScene } from "./scene";
 
-export type SceneStatus = "loading" | "ready" | "error";
+export type { SceneStatus } from "@/components/anatomy/viewport-runtime";
 
 type BodyFigureProps = {
   /** The live scene, for the overlays. */
@@ -41,58 +42,22 @@ export default function BodyFigure({
   className = "",
 }: BodyFigureProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const onSceneRef = useRef(onScene);
   const onBrainRegionRef = useRef(onBrainRegion);
-  const [status, setStatus] = useState<SceneStatus>("loading");
-  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    onSceneRef.current = onScene;
     onBrainRegionRef.current = onBrainRegion;
-  }, [onScene, onBrainRegion]);
+  }, [onBrainRegion]);
+
+  const { attempt, status, retry } = useAnatomyViewport(canvasRef, async (canvas, onStatus, signal) => {
+    const { createSimulatorScene } = await import("./scene");
+    if (signal.aborted) return null;
+    return createSimulatorScene(canvas, {
+      onStatus,
+      onBrainRegion: (region) => onBrainRegionRef.current?.(region),
+    });
+  }, onScene);
 
   useEffect(() => { onStatus?.(status); }, [onStatus, status]);
-
-  // The scene is created once per mount; a retry re-runs the effect.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    let scene: SimulatorScene | null = null;
-    let observer: IntersectionObserver | null = null;
-    let cancelled = false;
-
-    const coarse = window.matchMedia("(pointer: coarse)").matches;
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    import("./scene").then(({ createSimulatorScene }) => {
-      if (cancelled) return;
-      scene = createSimulatorScene(canvas, {
-        reducedMotion,
-        maxDpr: coarse ? 1.5 : 2,
-        onStatus: setStatus,
-        onBrainRegion: (region) => onBrainRegionRef.current?.(region),
-      });
-      onSceneRef.current?.(scene);
-
-      // The scene sleeps while it is out of sight: a background tab should
-      // not spend the battery drawing a body nobody is looking at.
-      observer = new IntersectionObserver(
-        ([entry]) => scene?.setPaused(!entry.isIntersecting),
-        { threshold: 0 }
-      );
-      observer.observe(canvas);
-    }).catch(() => {
-      if (!cancelled) setStatus("error");
-    });
-
-    return () => {
-      cancelled = true;
-      observer?.disconnect();
-      scene?.dispose();
-      onSceneRef.current?.(null);
-    };
-  }, [reloadKey]);
 
   /* The label over the focused organ ---------------------------------- */
 
@@ -102,14 +67,12 @@ export default function BodyFigure({
 
   useEffect(() => {
     if (!scene) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let raf = 0;
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let bx = 0;
     let by = 0;
     let started = false;
 
     const tick = () => {
-      raf = requestAnimationFrame(tick);
       const canvas = canvasRef.current;
       if (!canvas) return;
 
@@ -128,7 +91,7 @@ export default function BodyFigure({
         bx = hit.x;
         by = hit.y;
         started = true;
-      } else if (reduced) {
+      } else if (motion.matches) {
         bx = hit.x;
         by = hit.y;
       } else {
@@ -153,17 +116,18 @@ export default function BodyFigure({
       brainBox.style.transform = `translate3d(${left.toFixed(1)}px, ${top.toFixed(1)}px, 0)`;
     };
 
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return scene.subscribeFrame(tick);
   }, [scene]);
 
   return (
-    <div className={`relative h-full w-full ${className}`}>
+    <div className={`absolute inset-0 ${className}`} data-anatomy-status={status}>
       <canvas
+        key={attempt}
         ref={canvasRef}
+        aria-hidden={status !== "ready"}
         role="img"
         aria-label="See-through anatomy with an animated capsule and a gold trail showing the dose route."
-        className="block h-full w-full touch-pan-y select-none"
+        className="absolute inset-0 block h-full w-full touch-pan-y select-none"
       />
 
       {status === "ready" && stageLabel ? (
@@ -181,42 +145,16 @@ export default function BodyFigure({
       {/* The part of the brain under the pointer. */}
       <div
         ref={brainRef}
+        hidden={status !== "ready"}
         aria-hidden="true"
-        className="pointer-events-none absolute left-0 top-0 z-10 max-w-[min(280px,calc(100%-8px))] truncate rounded-[4px] border border-line-strong bg-page/85 px-2 py-1 font-mono text-[11px] uppercase leading-4 tracking-[0.12em] text-brand-text backdrop-blur-sm"
+        className="pointer-events-none absolute left-0 top-0 z-10 max-w-[min(280px,calc(100%-8px))] truncate rounded-[4px] border border-line-strong bg-page/85 px-2 py-1 font-mono text-xs uppercase leading-4 tracking-[0.12em] text-brand-text backdrop-blur-sm"
         style={{ opacity: 0, transform: "translate3d(0px, 0px, 0)" }}
       >
         <span ref={brainLabelRef} className="block truncate" />
         <span ref={brainPartRef} className="block truncate normal-case tracking-normal text-ink-2" />
       </div>
 
-      {/* The model's own state, said plainly. */}
-      {status !== "ready" ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-4 text-center"
-        >
-          <p className="font-mono text-[12px] uppercase tracking-[0.12em] text-ink-2">
-            {status === "loading" ? "Loading anatomy…" : "Anatomy unavailable"}
-          </p>
-          {status === "error" ? (
-            <>
-              <p className="max-w-[280px] text-[14px] leading-5 text-ink-2">
-                You can still play the timeline and view the model values.
-              </p>
-              <button
-                type="button"
-                onClick={() => { setStatus("loading"); setReloadKey((k) => k + 1); }}
-                className="pointer-events-auto flex items-center gap-2 rounded-[10px] border border-line-strong px-4 py-2 text-[13px] font-medium text-ink transition-colors hover:border-brand-text hover:text-brand-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
-              >
-                <RotateCcw className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
-                Try again
-              </button>
-            </>
-          ) : null}
-        </div>
-      ) : null}
-
+      <ViewportFallback status={status} retry={retry} />
     </div>
   );
 }
