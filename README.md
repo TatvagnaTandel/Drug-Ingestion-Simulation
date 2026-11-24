@@ -2,7 +2,11 @@
 
 An interactive web simulator for learning oral pharmacokinetics. Follow a dose through a 3D anatomy model, then see how the simulated concentration changes over time and where the input values came from.
 
-![Anatomy Theatre landing page with an illustrated human torso and a button to open the simulator](docs/screenshots/landing.webp)
+![Anatomy Theatre landing page with its continuously rotating 3D body model](docs/screens/ux/after/1440x900/landing.png)
+
+## Live Site
+
+[Open Anatomy Theatre on ChatGPT Sites](https://anatomy-theatre.gladbeam1.chatgpt.site)
 
 ## Run locally
 
@@ -21,19 +25,21 @@ Open [localhost:3000](http://localhost:3000) and choose **Open the simulator**. 
 
 The camera follows the first scheduled oral dose from swallowing and absorption through circulation, distribution and clearance. It holds its view at each organ stop while the clock and model values update. Use the journey rail to jump to a stage, scrub the timeline, or press **Space** to pause or resume when focus is outside a form control. Use **Inspect an organ** beside the live model outputs to isolate an organ.
 
-![Guided playback paused at the lungs, with the 3D model, journey rail, model readouts, and timeline visible](docs/screenshots/journey.webp)
+![The guided dose journey showing the 3D model, journey rail, model readouts, and timeline](docs/screens/ux/after/1440x900/stage-5.png)
 
 ## Read and export results
 
 Open **Results** for peak concentration, time to peak, area under the curve and elimination half-life. Each medicine has its own series for central concentration, gut amount and total elimination. **Download CSV** exports the time series. **Download PDF** exports the dose schedule, model inputs, figures, journey checkpoints and source references. The built-in studies cite published adult research and prescribing information.
 
-![Levetiracetam results with a concentration curve, peak metrics, source inputs, and a Download PDF button](docs/screenshots/results.webp)
+![Simulation results with concentration curves, peak metrics, source inputs, and export controls](docs/screens/ux/after/1440x900/results.png)
 
 ## Explore organ profiles
 
 Open **Organ Lab** from the navigation to compare reference and adjusted simulations. Explore profiles for the heart, lungs, liver and kidneys, and see how an illustrative change to clearance affects the concentration curve. The lab has a synthetic example that runs without Supabase.
 
 The lab can extract candidate values from a text-based sample PDF. The file and imported values stay in your browser. Review the extracted values before applying them to a draft. The organ profiles and clearance comparisons are teaching scenarios. See the [organ profile data and sources](data/organ-profiles).
+
+![Organ Lab comparing reference and illustrative clearance scenarios](docs/screens/ux/after/1440x900/lab-active.png)
 
 ## Optional Supabase setup
 
