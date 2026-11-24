@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="456" height="26" viewBox="0 0 456 26" role="img" aria-labelledby="title">
+  <title id="title">TypeScript, Python, CSS, PL/pgSQL, JavaScript, Shell</title>
+  <g fill="#24292f">
+    <rect x="0" width="88" height="26" rx="5"/>
+    <rect x="94" width="68" height="26" rx="5"/>
+    <rect x="168" width="50" height="26" rx="5"/>
+    <rect x="224" width="84" height="26" rx="5"/>
+    <rect x="314" width="84" height="26" rx="5"/>
+    <rect x="404" width="52" height="26" rx="5"/>
+  </g>
+  <g font-family="system-ui, sans-serif" font-size="12" font-weight="600" text-anchor="middle" fill="#fff">
+    <text x="44" y="17">TypeScript</text>
+    <text x="128" y="17">Python</text>
+    <text x="193" y="17">CSS</text>
+    <text x="266" y="17">PL/pgSQL</text>
+    <text x="356" y="17">JavaScript</text>
+    <text x="430" y="17">Shell</text>
+  </g>
+</svg>
