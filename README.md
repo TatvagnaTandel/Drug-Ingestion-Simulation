@@ -2,11 +2,13 @@
 
 An interactive web simulator for learning oral pharmacokinetics. Follow a dose through a 3D anatomy model, then see how the simulated concentration changes over time and where the input values came from.
 
-![Anatomy Theatre landing page with its continuously rotating 3D body model](docs/screens/ux/after/1440x900/landing.png)
+![Manava landing page showing the digestive tract](docs/screens/current/landing.webp)
 
 ## Live Site
 
 [Open Anatomy Theatre on ChatGPT Sites](https://anatomy-theatre.gladbeam1.chatgpt.site)
+
+<img src="apps/web/public/images/manava-rotation.webp" alt="Looping rotation of the anatomy model and digestive tract" width="240">
 
 ## Run locally
 
@@ -25,13 +27,13 @@ Open [localhost:3000](http://localhost:3000) and choose **Open the simulator**. 
 
 The camera follows the first scheduled oral dose from swallowing and absorption through circulation, distribution and clearance. It holds its view at each organ stop while the clock and model values update. Use the journey rail to jump to a stage, scrub the timeline, or press **Space** to pause or resume when focus is outside a form control. Use **Inspect an organ** beside the live model outputs to isolate an organ.
 
-![The guided dose journey showing the 3D model, journey rail, model readouts, and timeline](docs/screens/ux/after/1440x900/stage-5.png)
+![The absorption stage showing the stomach and intestines, concentration chart, and timeline](docs/screens/current/journey.webp)
 
 ## Read and export results
 
 Open **Results** for peak concentration, time to peak, area under the curve and elimination half-life. Each medicine has its own series for central concentration, gut amount and total elimination. **Download CSV** exports the time series. **Download PDF** exports the dose schedule, model inputs, figures, journey checkpoints and source references. The built-in studies cite published adult research and prescribing information.
 
-![Simulation results with concentration curves, peak metrics, source inputs, and export controls](docs/screens/ux/after/1440x900/results.png)
+![Simulation results showing the concentration curve, peak metrics, and PDF and CSV exports](docs/screens/current/results.webp)
 
 ## Explore organ profiles
 
@@ -39,7 +41,7 @@ Open **Organ Lab** from the navigation to compare reference and adjusted simulat
 
 The lab can extract candidate values from a text-based sample PDF. The file and imported values stay in your browser. Review the extracted values before applying them to a draft. The organ profiles and clearance comparisons are teaching scenarios. See the [organ profile data and sources](data/organ-profiles).
 
-![Organ Lab comparing reference and illustrative clearance scenarios](docs/screens/ux/after/1440x900/lab-active.png)
+![Organ Lab showing an isolated view of the kidneys](docs/screens/current/organ-lab.webp)
 
 ## Optional Supabase setup
 
